@@ -14,13 +14,13 @@ You will need `docker or docker-gpu` since all environments require the generic 
 
 On CPU
 ```
-cd phd_by_carlos/docker
+$ cd phd_by_carlos/docker
 $ bash start_cpu_env.sh ./Dockerfile.cpu.tf2.0.pytorch1.3
 ```
 
 On GPU
 ```
-cd phd_by_carlos/docker
+$ cd phd_by_carlos/docker
 $ bash start_gpu_env.sh ./Dockerfile.gpu.tf2.0.pytorch1.3
 ```
 
