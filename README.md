@@ -5,6 +5,9 @@ This is a repository designed to be my portable workstation. I can use it on a C
 
 ## SSH
 If you are using SSH to connect to a remote instance, remember to port forward :8888 to access the jupyter environment.
+```
+$ ssh -L 8888:localhost:8888 aquaktus@<IP.ADDRESS>
+```
 
 ## Docker
 You will need `docker or docker-gpu` since all environments require the generic environment.
