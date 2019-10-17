@@ -15,7 +15,7 @@ RUN apt-get install -y python3 \
     python-setuptools
 
 RUN pip3 install --force-reinstall --upgrade pip
-RUN pip install tensorflow-gpu==2.0.0-rc1
+RUN pip install tensorflow-gpu==2.0.0-rc1 tensorflow_datasets
 RUN pip install torch torchvision
-RUN pip install jupyter jupyterlab 
+RUN pip install jupyter jupyterlab tokenizer
 RUN pip install torchtext
