@@ -20,3 +20,6 @@ RUN pip install tensorflow-gpu==2.0.0-rc1 tensorflow_datasets
 RUN pip install torch torchvision
 RUN pip install jupyter jupyterlab tokenizer
 RUN pip install torchtext pytorch-nlp
+
+RUN apt-get install -y curl nodejs npm
+RUN jupyter labextension install jupyterlab-drawio
