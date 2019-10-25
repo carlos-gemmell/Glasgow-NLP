@@ -41,11 +41,11 @@ spec:
           requests:
             cpu: "1500m"
             memory: "4Gi"
-            nvidia.com/gpu: 1
+            nvidia.com/gpu: 0 # this allows you to access all GPUs at the same time
           limits:
             cpu: "2500m"
             memory: "16Gi"
-            nvidia.com/gpu: 1
+            nvidia.com/gpu: 0 # this allows you to access all GPUs at the same time
         command:
           - 'jupyter'
         args:
