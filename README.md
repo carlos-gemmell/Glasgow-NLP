@@ -28,3 +28,4 @@ Once in the docker container you can run the following to start the jupyter lab 
 ```
 $ jupyter notebook --ip 0.0.0.0 --no-browser --allow-root &
 ```
+
