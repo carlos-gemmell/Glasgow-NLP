@@ -25,8 +25,8 @@ spec:
         deploymentconfig: pythonMLNotebookGPU
     spec:
       nodeSelector:
-        # node-role.ida/gputitan: "true"
-        node-role.ida/gpu2080ti: "true"
+        node-role.ida/gputitan: "true"
+        # node-role.ida/gpu2080ti: "true"
       containers:
       - name: deepo-ml-plus
         image: aquaktus/docker_test_repo:v1
