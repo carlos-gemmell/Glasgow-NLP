@@ -7,6 +7,13 @@ chgrp -R nfsnobody phd_by_carlos
 chmod -R +w phd_by_carlos
 ```
 
+pushing a container image to docker hub
+```
+docker login
+docker build -t aquaktus/docker_ml_by_carlos:v2 -f ./Dockerfile.gpu.tf2.0.pytorch1.3 .
+docker push aquaktus/docker_ml_by_carlos:v2
+```
+
 Notebook deployment config
 ```
 apiVersion: apps.openshift.io/v1
@@ -29,7 +36,7 @@ spec:
         # node-role.ida/gpu2080ti: "true"
       containers:
       - name: deepo-ml-plus
-        image: aquaktus/docker_test_repo:v1
+        image: aquaktus/docker_ml_by_carlos:v2
         resources:
           requests:
             cpu: "1500m"
