@@ -64,7 +64,8 @@ class BeamSearchNode(object):
 decoder = DecoderRNN()
 
 
-def beam_decode(target_tensor, decoder_hiddens, encoder_outputs=None):
+# def beam_decode(target_tensor, decoder_hiddens, encoder_outputs=None):
+def beam_decode(model, batch_size, encoder_states):
     '''
     :param target_tensor: target indexes tensor of shape [B, T] where B is the batch size and T is the maximum length of the output sentence
     :param decoder_hidden: input tensor of shape [1, B, H] for start of the decoding
@@ -77,7 +78,7 @@ def beam_decode(target_tensor, decoder_hiddens, encoder_outputs=None):
     decoded_batch = []
 
     # decoding goes sentence by sentence
-    for idx in range(target_tensor.size(0)):
+    for idx in range(batch_size):
         if isinstance(decoder_hiddens, tuple):  # LSTM case
             decoder_hidden = (decoder_hiddens[0][:,idx, :].unsqueeze(0),decoder_hiddens[1][:,idx, :].unsqueeze(0))
         else:
