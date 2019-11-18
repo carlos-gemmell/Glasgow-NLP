@@ -47,9 +47,8 @@ spec:
             memory: "16Gi"
             nvidia.com/gpu: 0 # this allows you to access all GPUs at the same time
         command:
-          - 'jupyter'
+          - 'jupyter-lab'
         args:
-          - 'notebook'
           - '--no-browser'
           - '--ip=0.0.0.0'
           - '--allow-root'
