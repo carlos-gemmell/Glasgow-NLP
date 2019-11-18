@@ -40,7 +40,7 @@ class BeamSearchNode(object):
 
 
 
-def beam_search_decode(model,TGT_TEXT, batch_encoder_ids, beam_size=3, num_out=3, max_length=10, SOS_token=1,EOS_token=2, PAD_token=3):
+def beam_search_decode(model, batch_encoder_ids, beam_size=3, num_out=3, max_length=10, SOS_token=1,EOS_token=2, PAD_token=3):
     '''
     :param target_tensor: target indexes tensor of shape [B, T] where B is the batch size and T is the maximum length of the output sentence
     :param decoder_hidden: input tensor of shape [1, B, H] for start of the decoding
