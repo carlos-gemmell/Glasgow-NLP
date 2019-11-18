@@ -8,7 +8,7 @@ TOKEN='eyJhbGciOiJSUzI1NiIsImtpZCI6IiJ9.eyJpc3MiOiJrdWJlcm5ldGVzL3NlcnZpY2VhY2Nv
 
 ENDPOINT='https://idagpu-head.dcs.gla.ac.uk:8443'
 
-NODES = ['idagpu-01.dcs.gla.ac.uk', 'idagpu-02.dcs.gla.ac.uk']
+NODES = ['idagpu-01.dcs.gla.ac.uk', 'idagpu-02.dcs.gla.ac.uk', 'idagpu-03.dcs.gla.ac.uk', 'idagpu-04.dcs.gla.ac.uk']
 
 ONE_GIB = 1024 * 1024 * 1024
 ONE_MIB = 1024 * 1024
