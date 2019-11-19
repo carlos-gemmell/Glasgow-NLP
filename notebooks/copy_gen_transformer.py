@@ -9,6 +9,8 @@ from torch.nn.modules.dropout import Dropout
 from torch.nn.modules.linear import Linear
 from torch.nn.modules.normalization import LayerNorm
 
+from IPython.core.debugger import set_trace as tr
+
 class Transformer(Module):
     r"""A transformer model. User is able to modify the attributes as needed. The architecture
     is based on the paper "Attention Is All You Need". Ashish Vaswani, Noam Shazeer,
@@ -226,7 +228,7 @@ class TransformerDecoder(Module):
         output = tgt
 
         for i in range(self.num_layers):
-            output = self.layers[i](output, memory, tgt_mask=tgt_mask,
+            output, atts = self.layers[i](output, memory, tgt_mask=tgt_mask,
                                     memory_mask=memory_mask,
                                     tgt_key_padding_mask=tgt_key_padding_mask,
                                     memory_key_padding_mask=memory_key_padding_mask)
@@ -234,7 +236,7 @@ class TransformerDecoder(Module):
         if self.norm:
             output = self.norm(output)
 
-        return output
+        return output, atts # the attention weights are from the last layer only
 
 
 class TransformerEncoderLayer(Module):
@@ -357,8 +359,8 @@ class TransformerDecoderLayer(Module):
                               key_padding_mask=tgt_key_padding_mask)[0]
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
-        tgt2 = self.multihead_attn(tgt, memory, memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)[0]
+        tgt2, atts = self.multihead_attn(tgt, memory, memory, attn_mask=memory_mask,
+                                   key_padding_mask=memory_key_padding_mask)
         tgt = tgt + self.dropout2(tgt2)
         tgt = self.norm2(tgt)
         if hasattr(self, "activation"):
@@ -367,7 +369,7 @@ class TransformerDecoderLayer(Module):
             tgt2 = self.linear2(self.dropout(F.relu(self.linear1(tgt))))
         tgt = tgt + self.dropout3(tgt2)
         tgt = self.norm3(tgt)
-        return tgt
+        return tgt, atts
 
 
 
