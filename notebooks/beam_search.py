@@ -97,6 +97,7 @@ def beam_search_decode(model, batch_encoder_ids, beam_size=3, num_out=3, max_len
         encoder_input = torch.cat([n.encoder_input for (score,n) in working_nodes], dim=1)
         
         decoder_predictions = model(encoder_input, padded_decoder_input)
+#         print(ex["p_gens"])
         
         for (score, node), logits in zip(working_nodes, decoder_predictions.transpose(0,1)):
             last_token_pos = node.decoder_output.shape[0] - 1
