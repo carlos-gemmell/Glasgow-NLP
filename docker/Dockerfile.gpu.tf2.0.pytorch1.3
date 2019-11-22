@@ -7,7 +7,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
     wget vim \
-    software-properties-common
+    software-properties-common \
+    locales
+    
+RUN locale-gen en_US.UTF-8
+ENV LANG en_US.UTF-8
+ENV LANGUAGE en_US:en
 
 RUN add-apt-repository -y ppa:deadsnakes/ppa
 
@@ -19,7 +24,7 @@ RUN pip3 install --force-reinstall --upgrade pip
 RUN pip install tensorflow-gpu==2.0.0-rc1 tensorflow_datasets
 RUN pip install torch torchvision
 RUN pip install jupyter jupyterlab tokenizer
-RUN pip install torchtext pytorch-nlp nltk line_profiler
+RUN pip install torchtext pytorch-nlp nltk line_profiler runipy dotmap
 
 RUN apt-get install -y curl nodejs npm
 RUN jupyter labextension install jupyterlab-drawio
