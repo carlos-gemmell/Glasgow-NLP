@@ -14,6 +14,18 @@ docker build -t aquaktus/docker_ml_by_carlos:v2 -f ./Dockerfile.gpu.tf2.0.pytorc
 docker push aquaktus/docker_ml_by_carlos:v2
 ```
 
+### Running an executable job on the cluster
+Here we run a notebook as a script passing the location of a `config.json` file as an environment variable: `CONFIG`.
+```
+CONFIG=config.json runipy pytorch_copy_generator.ipynb
+```
+
+## OKD Config files
+
+#### Cluster location
+<https://console.ida.dcs.gla.ac.uk>
+
+
 Notebook deployment config
 ```
 apiVersion: apps.openshift.io/v1
