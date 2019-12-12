@@ -28,6 +28,7 @@ RUN pip install torchtext pytorch-nlp nltk line_profiler runipy dotmap
 
 RUN apt-get install -y curl nodejs npm
 RUN jupyter labextension install jupyterlab-drawio
+RUN jupyter labextension install @jupyter-widgets/jupyterlab-manager
 
 RUN git config --global user.email "aquaktus@yahoo.co.uk"
 RUN git config --global user.name "aquaktus"
