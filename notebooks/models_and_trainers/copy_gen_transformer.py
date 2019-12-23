@@ -1,5 +1,6 @@
 import torch
 import copy
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.modules.module import Module
 from torch.nn.modules.activation import MultiheadAttention
@@ -8,8 +9,243 @@ from torch.nn.init import xavier_uniform_
 from torch.nn.modules.dropout import Dropout
 from torch.nn.modules.linear import Linear
 from torch.nn.modules.normalization import LayerNorm
+from torchtext.data import Field, BucketIterator
+import torchtext
+import time
+import math
 
 from IPython.core.debugger import set_trace as tr
+from .base_transformer import TransformerModel, PositionalEncoding
+from dotmap import DotMap
+
+class CopyGeneratorModel():
+    def __init__(self, vocab, vocab_size, embed_dim, att_heads, layers, dim_feedforward, lr, max_seq_length, use_copy=True):
+        self.vocab = vocab
+        self.vocab_size = vocab_size
+        self.model = CopyGeneratorTransformer(vocab_size, 
+                                             embed_dim, 
+                                             att_heads, 
+                                             layers, 
+                                             dim_feedforward, 
+                                             dropout=0.5, 
+                                             use_copy=True)
+        self.max_seq_length = max_seq_length
+        self.use_copy = use_copy
+        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=lr)
+        self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, 1.0, gamma=0.99)
+        
+        
+    def train_step(self, batch, metadata):
+        self.model.train() # Turn on the train mode
+        total_loss = 0.
+        start_time = time.time()
+        tgt_vocab_size = len(self.vocab.itos) + self.max_seq_length
+        encoder_input = batch.src
+        decoder_input = batch.tgt[:-1]
+        targets = batch.tgt[1:]
+
+        self.optimizer.zero_grad()
+        output = self.model(encoder_input, decoder_input)
+        
+        criterion = nn.CrossEntropyLoss(ignore_index=self.vocab.stoi['<pad>'])
+        loss = criterion(output.view(-1, tgt_vocab_size), targets.view(-1))
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
+        self.optimizer.step()
+        elapsed = time.time() - start_time
+        return loss
+    
+    def data2dataset_OOV(self, data):
+        TEXT_FIELD = Field(sequential=True, use_vocab=False, unk_token=0, init_token=1,eos_token=2, pad_token=3)
+        OOV_TEXT_FIELD = Field(sequential=True, use_vocab=False, pad_token=3)
+
+        OOV_stoi = {}
+        OOV_itos = {}
+        OOV_starter_count = 30000
+        OOV_count = OOV_starter_count
+        metadata = DotMap()
+        metadata.OOV_stoi = OOV_stoi
+        metadata.OOV_itos = OOV_itos
+
+        examples = []
+
+        for (src, tgt) in data:
+            src_ids, OOVs = self.vocab.encode_input(src)
+            tgt_ids = self.vocab.encode_output(tgt, OOVs)
+            OOV_ids = []
+
+            for OOV in OOVs:
+                try:
+                    idx = OOV_stoi[OOV]
+                    OOV_ids.append(idx)
+                except KeyError as e:
+                    OOV_count += 1
+                    OOV_stoi[OOV] = OOV_count
+                    OOV_itos[OOV_count] = OOV
+                    OOV_ids.append(OOV_count)
+
+            examples.append(torchtext.data.Example.fromdict({"src":src_ids, 
+                                                             "tgt":tgt_ids, 
+                                                             "OOVs":OOV_ids}, 
+                                                    fields={"src":("src",TEXT_FIELD), 
+                                                            "tgt":("tgt",TEXT_FIELD), 
+                                                            "OOVs":("OOVs", OOV_TEXT_FIELD)}))
+        
+        dataset = torchtext.data.Dataset(examples,fields={"src":TEXT_FIELD, 
+                                                          "tgt":TEXT_FIELD, 
+                                                          "OOVs":OOV_TEXT_FIELD})
+        
+        return dataset, metadata
+    
+    def batch_filter_ids(self, batch_list):
+        return [[id for id in l if id not in [1,2,3]] for l in batch_list]
+    
+    def evaluate_iterator(self, iterator, metadta):
+        BLEU_scores = []
+        for i, batch in enumerate(valid_iterator):
+            batch_size = batch.src.shape[1]
+            
+            encoder_inputs = batch.src
+            predictions = beam_search.beam_search_decode(model,
+                              batch_encoder_ids=encoder_inputs,
+                              SOS_token=stoi["<sos>"],
+                              EOS_token=stoi["<eos>"],
+                              PAD_token=stoi["<pad>"],
+                              beam_size=beam_size,
+                              max_length=30,
+                              num_out=1)
+            
+            sources = encoder_inputs.transpose(0,1).cpu().tolist()
+            sources = batch_filter_ids(sources)
+            
+            predictions = [t[0].view(-1).cpu().tolist() for t in predictions]
+            predictions = self.batch_filter_ids(predictions)
+            
+            targets = batch.tgt.transpose(0,1).cpu().tolist()
+            targets = batch_filter_ids(targets)
+            
+#             print(batch.tgt)
+            
+            OOVss = [[OOV_itos[OOV] for OOV in batch.OOVs.cpu()[:,idx].tolist() if OOV != 3] for idx in range(batch_size)]
+            
+            if i % int(len(valid_iterator)/3) == 0:
+                print("| EVALUATION | {:5d}/{:5d} batches |".format(i, len(valid_iterator)))
+            
+            for j in range(batch_size):
+                BLEU = nltk_bleu(targets[j], predictions[j])
+                BLEU_scores.append(BLEU)
+                
+                out_fp.write("SRC  :" + decode(sources[j], OOVss[j]) + "\n")
+                out_fp.write("TGT  :" + decode(targets[j], OOVss[j]) + "\n")
+                out_fp.write("PRED :" + decode(predictions[j], OOVss[j]) + "\n")
+                out_fp.write("BLEU :" + str(BLEU) + "\n")
+                out_fp.write("\n")
+                
+                if log:
+                    print("SRC  :" + decode(sources[j], OOVss[j]))
+                    print("TGT  :" + decode(targets[j], OOVss[j]))
+                    print("PRED :" + decode(predictions[j], OOVss[j]))
+                    print("BLEU :" + str(BLEU))
+                    print()
+        out_fp.write("\n\n| EVALUATION | BLEU: {:5.2f} |\n".format(np.average(BLEU_scores)))
+        print("| EVALUATION | BLEU: {:5.3f} |".format(np.average(BLEU_scores)))
+        return np.average(BLEU_scores)
+        
+        
+    def save(save_fp):
+        torch.save((self.model, self.optimizer, self.scheduler, self.vocab), save_fp)
+    
+    def restore(restore_fp):
+        self.model, self.optimizer, self.scheduler, self.vocab = torch.load(restore_fp)
+
+
+class CopyGeneratorTransformer(nn.Module):
+
+    def __init__(self, vocab_size, embed_dim, att_heads, layers, dim_feedforward, dropout=0.5, use_copy=True):
+        super(CopyGeneratorTransformer, self).__init__()
+        self.model_type = 'Transformer'
+        
+        self.use_copy = use_copy
+        self.embedding_size = embed_dim
+        self.pos_encoder = PositionalEncoding(embed_dim, dropout)
+        self.src_encoder = nn.Embedding(vocab_size, embed_dim)
+        self.tgt_encoder = nn.Embedding(vocab_size, embed_dim)
+        
+        self.transformer = Transformer(d_model=embed_dim,
+                                       nhead=att_heads, 
+                                       num_encoder_layers=layers, 
+                                       num_decoder_layers=layers, 
+                                       dim_feedforward=dim_feedforward)
+        self.decoder = nn.Linear(embed_dim, vocab_size)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.att_mask_noise = 0.0
+        
+        if use_copy:
+            self.p_generator = nn.Linear(embed_dim,1)
+
+        self.init_weights()
+        self.tgt_mask = None
+
+    def init_weights(self):
+        initrange = 0.1
+        self.src_encoder.weight.data.uniform_(-initrange, initrange)
+        self.tgt_encoder.weight.data.uniform_(-initrange, initrange)
+        
+        self.decoder.bias.data.zero_()
+        self.decoder.weight.data.uniform_(-initrange, initrange)
+        
+    def _generate_square_subsequent_mask(self, sz):
+#         noise_e = 0.05 if self.training else 0.0 # this is code to add noise to the decoding process during training
+        noise_e = self.att_mask_noise if self.training else 0.0
+        noise_mask = (torch.rand(sz,sz) > noise_e).float()
+
+        mask = (torch.triu(torch.ones(sz,sz))).transpose(0, 1)
+        mask = torch.mul(mask, noise_mask)
+        v = (torch.sum(mask, dim=-1) == 0).float()
+
+        fix_mask = torch.zeros(sz,sz)
+        fix_mask[:,0] = 1.0
+        v = v.repeat(sz, 1).transpose(0,1)
+        fix_mask = torch.mul(fix_mask,v)
+
+        mask += fix_mask
+        
+        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+        return mask
+
+    def forward(self, src, tgt):
+        self.tgt_mask = self._generate_square_subsequent_mask(len(tgt)).to(self.device)
+        
+
+        src_emb = self.src_encoder(src) * math.sqrt(self.embedding_size)
+        src_emb = self.pos_encoder(src_emb)
+        
+        tgt_emb = self.tgt_encoder(tgt) * math.sqrt(self.embedding_size)
+        tgt_emb = self.pos_encoder(tgt_emb)
+        
+        output, atts = self.transformer(src_emb, tgt_emb, tgt_mask=self.tgt_mask)
+        vocab_output = self.decoder(output)
+        
+        if self.use_copy:
+            src_scat = src.transpose(0,1)
+            src_scat = src_scat.unsqueeze(0)
+            src_scat = torch.repeat_interleave(src_scat, tgt.shape[0], dim=0)
+    #         print("src_scat.shqape", src_scat.shape)
+
+            p_gens = self.p_generator(output).sigmoid()
+            atts = atts.transpose(0,1)
+    #         print("att.shqape", atts.shape)
+            atts = atts * (1 - p_gens)
+
+#             output = self.decoder(output)
+    #         output[:,:,12:] = -np.inf
+            vocab_output = vocab_output.softmax(-1)
+            vocab_output = vocab_output * p_gens
+
+            vocab_output = vocab_output.scatter_add_(2,src_scat,atts)
+            vocab_output = vocab_output.log()
+        
+        return vocab_output
 
 class Transformer(Module):
     r"""A transformer model. User is able to modify the attributes as needed. The architecture
