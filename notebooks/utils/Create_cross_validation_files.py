@@ -1,5 +1,5 @@
 import argparse
-from utils.file_ops import corpus_to_array, array_to_corpus
+from file_ops import corpus_to_array, array_to_corpus
 import os
 
 def chunks(lst, n):
