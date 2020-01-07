@@ -57,7 +57,7 @@ def get_tags(matrix):
     sequence.reverse()
     return sequence
 
-def single_step_edits(s1, s2, token_insertions=-1):
+def single_step_edits(s1, s2, token_insertions=-1, pad_token="<pad>"):
     '''
     This function returns a sequence of edit commands to convert s1 to s1' that is closer to s2.
     The outputs are lists of the same length as s1.
@@ -88,9 +88,9 @@ def single_step_edits(s1, s2, token_insertions=-1):
         if tags[i] == "R":
             token_replacements.append(s2[i])
         elif tags[i] == "K":
-            token_replacements.append("<N>")
+            token_replacements.append(pad_token)
         elif tags[i] == "D":
-            token_replacements.append("<N>")
+            token_replacements.append(pad_token)
             s2[i:i] = ["<temp_gen>"]
         
     
@@ -108,7 +108,7 @@ def single_step_edits(s1, s2, token_insertions=-1):
     return edit_commands, insert_locations, token_replacements
     
     
-def perform_edits(s, edits):
+def perform_edits(s, edits, gen_tok_id=4):
     edit_commands, insert_locations, token_replacements = edits
     
     # replace tokens first and flag for deletion
@@ -123,7 +123,7 @@ def perform_edits(s, edits):
     for i in range(len(insert_locations)):
         if insert_locations[i] > 0:
             insertion_index = i+1+ofset
-            s[insertion_index:insertion_index] = ["<gen>"] * insert_locations[i]
+            s[insertion_index:insertion_index] = [gen_tok_id] * insert_locations[i]
             ofset += insert_locations[i]
     
     s = [x for x in s if x != "<DELETE_ME>"]
