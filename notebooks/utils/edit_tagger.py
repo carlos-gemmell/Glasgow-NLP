@@ -109,6 +109,7 @@ def single_step_edits(s1, s2, token_insertions=-1, pad_token="<pad>"):
     
     
 def perform_edits(s, edits, gen_tok_id=4):
+    s = s.copy()
     edit_commands, insert_locations, token_replacements = edits
     
     # replace tokens first and flag for deletion
