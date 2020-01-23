@@ -97,3 +97,12 @@ def samples_to_dataset(samples):
         
     dataset = torchtext.data.Dataset(examples,fields={"src":src_field, "tgt":tgt_field})
     return dataset
+
+def nltk_bleu(refrence, prediction):
+    """
+    Implementation from ReCode
+    and moses multi belu script sets BLEU to 0.0 if len(toks) < 4
+    """
+    ngram_weights = [0.25] * min(4, len(refrence))
+    return sentence_bleu([refrence], prediction, weights=ngram_weights, 
+                          smoothing_function=SmoothingFunction().method3)

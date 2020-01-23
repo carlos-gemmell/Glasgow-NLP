@@ -57,7 +57,7 @@ def get_tags(matrix):
     sequence.reverse()
     return sequence
 
-def single_step_edits(s1, s2, token_insertions=-1, pad_token="<pad>"):
+def single_step_edits(s1, s2, token_insertions=-1, max_insertions=10, pad_token="<pad>"):
     '''
     This function returns a sequence of edit commands to convert s1 to s1' that is closer to s2.
     The outputs are lists of the same length as s1.
@@ -104,6 +104,8 @@ def single_step_edits(s1, s2, token_insertions=-1, pad_token="<pad>"):
     
     if token_insertions > 0:
         insert_locations = [token_insertions if x!=0 else 0 for x in insert_locations]
+    
+    insert_locations = [np.minimum(max_insertions, ins) for ins in insert_locations]
     
     return edit_commands, insert_locations, token_replacements
     

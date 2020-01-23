@@ -1,0 +1,10 @@
+{
+    "source_keys":[ "encoder.layer.0.attention.self.query.weight",
+                    "encoder.layer.0.attention.self.key.weight",
+                    "encoder.layer.0.attention.self.value.weight",
+                    "encoder.layer.0.attention.self.query.bias",
+                    "encoder.layer.0.attention.self.key.bias",
+                    "encoder.layer.0.attention.self.value.bias"],
+    "target_keys":["encoder.layers.0.self_attn.in_proj_weight",
+                   "encoder.layers.0.self_attn.in_proj_bias"]
+}
