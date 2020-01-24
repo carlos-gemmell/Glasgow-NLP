@@ -23,9 +23,9 @@ class Model_Wrapper():
         self.scheduler = model_class.scheduler
 
 
-    def train(self, data, batch_size, steps, log_interval=200, eval_interval=1000, save_iinterval=2000):
+    def train(self, data, batch_size, steps, log_interval=200, eval_interval=1000, save_interval=2000):
         learning_interval=4000
-        dataset, metadata = self.data2Dataset_fn(data)      
+        dataset, metadata = self.data2Dataset_fn(data, self.vocab)      
 
         train_iterator = BucketIterator(
             dataset,
@@ -49,33 +49,33 @@ class Model_Wrapper():
                 print('| {:5d}/{:5d} steps | '
                       'lr {:02.4f} | ms/batch {:5.2f} | '
                       'loss {:5.2f} | ppl {:8.2f}'.format(
-                        step, steps, scheduler.get_lr()[0],
+                        step, steps, self.scheduler.get_lr()[0],
                         elapsed * 1000 / log_interval,
                         cur_loss, math.exp(cur_loss)))
                 total_loss = 0
                 start_time = time.time()
 
             if step % eval_interval == 0 and self.can_eval:
-                if self.eval__data == None:
-                    print("WARNING: No evaluation data passed for in training evaluation!")
-                else:
+                if hasattr(self, 'eval__data'):
                     print("Evaluating model")
                     self.evaluate()
-                    model.train()
+                    self.model.train()
+                else:
+                    print("WARNING: No evaluation data passed for in training evaluation!")
 
             if step % learning_interval == 0:
-                scheduler.step()
+                self.scheduler.step()
 
             step += 1
             if step >= steps:
                 print("Finished training")
     
-    def pass_eval_data(data):
+    def pass_eval_data(self, data):
         self.eval__data = data
         
-    def evaluate():
-        dataset, metadata = self.data2Dataset_fn(self.eval__data) 
-        model.eval() # Turn on the evaluation mode
+    def evaluate(self):
+        dataset, metadata = self.data2Dataset_fn(self.eval__data, self.vocab) 
+        self.model.eval() # Turn on the evaluation mode
         valid_iterator = BucketIterator(dataset,
             batch_size = self.batch_size,
             sort_key = lambda x: len(x.src)+len(x.tgt),
@@ -83,4 +83,4 @@ class Model_Wrapper():
         
         with torch.no_grad():
             score = self.evaluate_fn(valid_iterator, metadata)
-            print(f"EVALUATION SCORE: {score:.2f}")
+            print(f"EVALUATION SCORE: {score:.3f}")
