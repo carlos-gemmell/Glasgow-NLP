@@ -31,7 +31,7 @@ Notebook deployment config
 apiVersion: apps.openshift.io/v1
 kind: DeploymentConfig
 metadata:
-  name: pythonmlnotebookgpu
+  name: pythonmlnotebookgpu2
   namespace: 2209560gproject
 spec:
   replicas: 1
@@ -40,7 +40,7 @@ spec:
   template:
     metadata:
       labels:
-        app: pythonMLNotebook
+        app: pythonMLNotebook2
         deploymentconfig: pythonMLNotebookGPU
     spec:
       nodeSelector:
@@ -48,14 +48,14 @@ spec:
         # node-role.ida/gpu2080ti: "true"
       containers:
       - name: deepo-ml-plus
-        image: aquaktus/docker_ml_by_carlos:v2
+        image: aquaktus/docker_ml_by_carlos:v3
         resources:
           requests:
             cpu: "1500m"
             memory: "4Gi"
             nvidia.com/gpu: 0 # this allows you to access all GPUs at the same time
           limits:
-            cpu: "2500m"
+            cpu: "16000m"
             memory: "16Gi"
             nvidia.com/gpu: 0 # this allows you to access all GPUs at the same time
         command:
