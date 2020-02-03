@@ -1,6 +1,7 @@
 from datetime import datetime
 from torchtext.data import Field, BucketIterator
 import re
+from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
 
 def super_print(filename):
     '''

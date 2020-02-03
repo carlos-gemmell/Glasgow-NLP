@@ -8,6 +8,11 @@ class Shared_Vocab():
         self.tokenizer_fn = tokenizer_fn
         self.use_OOVs = use_OOVs
         
+        self.OOV_stoi = {}
+        self.OOV_itos = {}
+        self.OOV_starter_count = 30000
+        self.OOV_count = self.OOV_starter_count
+        
         all_toks = []
         for (src, tgt) in data:
             all_toks += tokenizer_fn(src)
@@ -19,6 +24,7 @@ class Shared_Vocab():
             self.stoi[tok] = len(self.stoi)
         
         self.itos = [k for k,v in sorted(self.stoi.items(), key=lambda kv: kv[1])]
+        self.size = len(self.itos)
         
         
     def encode_input(self, string):
@@ -37,10 +43,23 @@ class Shared_Vocab():
                 else:
                     IDs.append(self.stoi["<unk>"])
         
-        if self.use_OOVs: return IDs, OOVs
+        if self.use_OOVs: 
+            OOV_ids = []
+
+            for OOV in OOVs:
+                try:
+                    idx = self.OOV_stoi[OOV]
+                    OOV_ids.append(idx)
+                except KeyError as e:
+                    self.OOV_count += 1
+                    self.OOV_stoi[OOV] = self.OOV_count
+                    self.OOV_itos[self.OOV_count] = OOV
+                    OOV_ids.append(self.OOV_count)
+            return IDs, OOV_ids
         else: return IDs
     
-    def encode_output(self, string, OOVs=[]):
+    def encode_output(self, string, OOV_ids=[]):
+        OOVs = self.OOV_ids2OOVs(OOV_ids)
         IDs = []
         words = self.tokenizer_fn(string)
         for word in words:
@@ -55,16 +74,27 @@ class Shared_Vocab():
                     IDs.append(self.stoi["<unk>"])
         return IDs
     
-    def decode(self, ids, OOVs=[]):
+    def decode(self, ids, OOV_ids=[]):
+        OOVs = self.OOV_ids2OOVs(OOV_ids)
         extended_itos = self.itos.copy()
         extended_itos += [OOV+"(COPY)" for OOV in OOVs]
         return " ".join([extended_itos[id] for id in ids if id<len(extended_itos)])
     
     def decode_input(self, ids, OOVs=[]):
-        return decode(ids, OOVs=[])
+        return self.decode(ids, OOVs)
     
     def decode_output(self, ids, OOVs=[]):
-        return decode(ids, OOVs=[])
+        return self.decode(ids, OOVs)
+    
+    def OOV_ids2OOVs(self, OOV_ids):
+        return [self.OOV_itos[OOV_id] if OOV_id in self.OOV_itos else "<unk>" for OOV_id in OOV_ids]
+    
+    def add_test_set_OOVs(self, data):
+        """
+        data: [(src,tgt)]
+        """
+        for (src, tgt) in data:
+            self.encode_input(src)
     
     
 class Separate_Vocab():

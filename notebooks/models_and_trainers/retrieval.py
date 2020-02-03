@@ -63,9 +63,9 @@ class PyLuceneRetriever():
         self.writer.commit()
         self.writer.close()
         
-    def BM25_search(self, query):
+    def BM25_search(self, query, k1=1.2, b=0.75):
         searcher=IndexSearcher(DirectoryReader.open(self.store))
-        searcher.setSimilarity(BM25Similarity())
+        searcher.setSimilarity(BM25Similarity(float(k1), float(b)))
         
         queryparser.classic.QueryParser( "fieldname", self.analyzer)
         parser = queryparser.classic.QueryParser("field", self.analyzer)

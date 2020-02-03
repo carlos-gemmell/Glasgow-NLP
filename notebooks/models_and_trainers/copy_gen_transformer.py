@@ -135,7 +135,7 @@ class CopyGeneratorModel():
 
 class CopyGeneratorTransformer(nn.Module):
 
-    def __init__(self, vocab_size=30522, embed_dim=768, att_heads=12, layers=12, dim_feedforward=3072, dropout=0.1, use_copy=True, masked_look_ahead_att=True):
+    def __init__(self, vocab_size=30522, embed_dim=768, att_heads=12, layers=12, dim_feedforward=3072, dropout=0.1, use_copy=True, masked_look_ahead_att=True, max_seq_length=200):
         super(CopyGeneratorTransformer, self).__init__()
         self.model_type = 'Transformer'
         
@@ -143,14 +143,16 @@ class CopyGeneratorTransformer(nn.Module):
         self.masked_look_ahead_att = masked_look_ahead_att
         
         self.embedding_size = embed_dim
-        self.bert_encoder_model = BERTStyleEncoder()
-        self.bert_encoder_model.load_pretrained()
+        self.bert_encoder_model = BERTStyleEncoder(vocab_size=vocab_size, dim_model=embed_dim, nhead=att_heads, \
+                 num_encoder_layers=layers, d_feed=dim_feedforward, dropout=dropout)
+#         self.bert_encoder_model.load_pretrained()
         
         self.src_embedder = self.bert_encoder_model.embedder
         self.src_encoder = self.bert_encoder_model.encoder
         
-        self.bert_decoder_model = BERTStyleDecoder()
-        self.bert_decoder_model.load_pretrained()
+        self.bert_decoder_model = BERTStyleDecoder(vocab_size=vocab_size, dim_model=embed_dim, nhead=att_heads, \
+                 num_encoder_layers=layers, d_feed=dim_feedforward, dropout=dropout)
+#         self.bert_decoder_model.load_pretrained()
         
         self.tgt_embedder = self.bert_encoder_model.embedder # nn.Embedding(vocab_size, embed_dim)
         self.tgt_decoder = self.bert_decoder_model.decoder
@@ -165,6 +167,8 @@ class CopyGeneratorTransformer(nn.Module):
         self.decoder = nn.Linear(embed_dim, vocab_size)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.att_mask_noise = 0.0
+        
+        self.mask_index = [None] + [self._generate_square_subsequent_mask(i).to(self.device) for i in range(1,max_seq_length)]
         
         if use_copy:
             self.p_generator = nn.Linear(embed_dim,1)
