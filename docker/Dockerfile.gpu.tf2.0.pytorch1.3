@@ -34,6 +34,7 @@ RUN git config --global user.email "aquaktus@yahoo.co.uk"
 RUN git config --global user.name "aquaktus"
 
 # Pylucene setup
+RUN apt-get update -y
 RUN apt-get install -y default-jdk ant
 
 WORKDIR /usr/lib/jvm/default-java/jre/lib
