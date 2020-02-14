@@ -116,3 +116,73 @@ spec:
     targetPort: 8888
 
 ```
+
+
+### Single Pod GPU script
+##### CoNaLa Example
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: conala-tiny-transformer-custom-tok-75-seq-len-850-vocab
+  namespace: 2209560gproject
+spec:
+  volumes:
+  - name: nfs-access
+    persistentVolumeClaim:
+      claimName: 2209560gvol1claim
+  nodeSelector:
+    # node-role.ida/gputitan: "true"
+    node-role.ida/gpu2080ti: "true"
+  containers:
+  - env: 
+    name: conala-tiny-transformer-custom-tok-75-seq-len-850-vocab
+    image: aquaktus/docker_ml_by_carlos:v6
+    resources:
+      requests:
+        cpu: "1500m"
+        memory: "4Gi"
+        nvidia.com/gpu: 1 # this allows you to access all GPUs at the same time
+      limits:
+        cpu: "16000m"
+        memory: "16Gi"
+        nvidia.com/gpu: 1 # this allows you to access all GPUs at the same time
+    imagePullPolicy: IfNotPresent
+    command:
+      - 'python3'     
+    args:
+      - '/nfs/phd_by_carlos/notebooks/main_autoReg.py'
+      - '--output_dir'
+      - '/nfs/phd_by_carlos/notebooks/conala-tiny-transformer-custom-tok-75-seq-len-850-vocab'
+      - '--src_train_fp'
+      - '/nfs/phd_by_carlos/notebooks/datasets/CoNaLa/conala-train.src'
+      - '--tgt_train_fp'
+      - '/nfs/phd_by_carlos/notebooks/datasets/CoNaLa/conala-train.tgt'
+      - '--src_test_fp'
+      - '/nfs/phd_by_carlos/notebooks/datasets/CoNaLa/conala-test.src'
+      - '--tgt_test_fp'
+      - '/nfs/phd_by_carlos/notebooks/datasets/CoNaLa/conala-test.tgt'
+      - '--steps'
+      - '500000'
+      - '--log_interval'
+      - '100'
+      - '--max_seq_len'
+      - '75'
+      - '--eval_interval'
+      - '5000'
+      - '--save_interval'
+      - '5000'
+      - '--layers'
+      - '2'
+      - '--att_heads'
+      - '4'
+      - '--embed_dim'
+      - '512'
+      - '--dim_feedforward'
+      - '1024'
+    volumeMounts: 
+    - mountPath: /nfs/
+      name: nfs-access
+  serviceAccount: containerroot
+  restartPolicy: Never
+```
