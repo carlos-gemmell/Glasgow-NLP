@@ -186,3 +186,73 @@ spec:
   serviceAccount: containerroot
   restartPolicy: Never
 ```
+
+##### Django example
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: django-big-transformer-bert-tok
+  namespace: 2209560gproject
+spec:
+  volumes:
+  - name: nfs-access
+    persistentVolumeClaim:
+      claimName: 2209560gvol1claim
+  nodeSelector:
+    # node-role.ida/gputitan: "true"
+    node-role.ida/gpu2080ti: "true"
+  containers:
+  - env: 
+    name: django-big-transformer-bert-tok
+    image: aquaktus/docker_ml_by_carlos:v6
+    resources:
+      requests:
+        cpu: "1500m"
+        memory: "4Gi"
+        nvidia.com/gpu: 1 # this allows you to access all GPUs at the same time
+      limits:
+        cpu: "16000m"
+        memory: "16Gi"
+        nvidia.com/gpu: 1 # this allows you to access all GPUs at the same time
+    imagePullPolicy: IfNotPresent
+    command:
+      - 'python3'     
+    args:
+      - '/nfs/phd_by_carlos/notebooks/main_autoReg.py'
+      - '--src_train_fp'
+      - '/nfs/phd_by_carlos/notebooks/datasets/django_folds/django.fold1-10.train.src'
+      - '--tgt_train_fp'
+      - '/nfs/phd_by_carlos/notebooks/datasets/django_folds/django.fold1-10.train.tgt'
+      - '--src_test_fp'
+      - '/nfs/phd_by_carlos/notebooks/datasets/django_folds/django.fold1-10.test.src'
+      - '--tgt_test_fp'
+      - '/nfs/phd_by_carlos/notebooks/datasets/django_folds/django.fold1-10.test.tgt'
+      - '--steps'
+      - '500000'
+      - '--log_interval'
+      - '100'
+      - '--max_seq_len'
+      - '50'
+      - '--vocab_size'
+      - '30522'
+      - '--eval_interval'
+      - '5000'
+      - '--save_interval'
+      - '5000'
+      - '--layers'
+      - '12'
+      - '--att_heads'
+      - '12'
+      - '--embed_dim'
+      - '768'
+      - '--dim_feedforward'
+      - '3072'
+      - '--output_dir'
+      - '/nfs/phd_by_carlos/notebooks/django-big-transformer-BERT-tok'
+    volumeMounts: 
+    - mountPath: /nfs/
+      name: nfs-access
+  serviceAccount: containerroot
+  restartPolicy: Never
+```
