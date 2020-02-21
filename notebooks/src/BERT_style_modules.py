@@ -1,5 +1,5 @@
 from transformers import BertModel, BertForMaskedLM, BertTokenizer
-from bert_pretrain_convert.state_dict_translate import translate_from_hugginface_to_torch_BERT
+from .bert_pretrain_convert.state_dict_translate import translate_from_hugginface_to_torch_BERT
 from torch.nn.modules import LayerNorm
 
 import torch

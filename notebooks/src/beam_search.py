@@ -40,7 +40,7 @@ class BeamSearchNode(object):
 
 
 
-def beam_search_decode(model, batch_encoder_ids, beam_size=3, num_out=3, max_length=10, SOS_token=1,EOS_token=2, PAD_token=3):
+def beam_search_decode(model, batch_encoder_ids, batch_decoder_truth_ids, OOVss, output_nudge_fn=None, beam_size=3, num_out=3, max_length=10, SOS_token=1,EOS_token=2, PAD_token=3):
     '''
     :param target_tensor: target indexes tensor of shape [B, T] where B is the batch size and T is the maximum length of the output sentence
     :param decoder_hidden: input tensor of shape [1, B, H] for start of the decoding
@@ -99,10 +99,14 @@ def beam_search_decode(model, batch_encoder_ids, beam_size=3, num_out=3, max_len
         decoder_predictions = model(encoder_input, padded_decoder_input)
 #         print(ex["p_gens"])
         
-        for (score, node), logits in zip(working_nodes, decoder_predictions.transpose(0,1)):
+        for (score, node), logits, inputs, truth_outputs, OOVs, single_decoder_input in zip(working_nodes, decoder_predictions.transpose(0,1),\
+                                                 batch_encoder_ids.transpose(0,1), batch_decoder_truth_ids.transpose(0,1), \
+                                                 OOVss.transpose(0,1), padded_decoder_input.transpose(0,1)):
             last_token_pos = node.decoder_output.shape[0] - 1
             last_token_logits = logits[last_token_pos] 
             last_token_log_probs = last_token_logits.log_softmax(0)
+            if output_nudge_fn:
+                last_token_log_probs = output_nudge_fn(last_token_log_probs, single_decoder_input, inputs, truth_outputs, OOVs)
             log_probs, indexes = torch.topk(last_token_log_probs, beam_sizes[node.batch_num])
             for log_prob, idx in zip(log_probs, indexes):
                 new_decoder_output = torch.cat([node.decoder_output, idx.view(-1,1)])
