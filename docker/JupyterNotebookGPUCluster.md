@@ -192,7 +192,7 @@ spec:
 apiVersion: v1
 kind: Pod
 metadata:
-  name: conala-tiny-transformer-custom-tok-75-seq-len-850-vocab
+  name: django-tiny-transformer-valid-testing
   namespace: 2209560gproject
 spec:
   volumes:
@@ -204,7 +204,7 @@ spec:
     node-role.ida/gpu2080ti: "true"
   containers:
   - env: 
-    name: conala-tiny-transformer-custom-tok-75-seq-len-850-vocab
+    name: django-tiny-transformer-valid-testing
     image: aquaktus/docker_ml_by_carlos:v6
     resources:
       requests:
@@ -230,6 +230,8 @@ spec:
       - '.test'
       - '--src_prefix'
       - '.src'
+      - '--tgt_prefix'
+      - '.tgt'
       - '--steps'
       - '200000'
       - '--log_interval'
