@@ -187,12 +187,12 @@ spec:
   restartPolicy: Never
 ```
 
-##### Django example
+##### Django validation example
 ```
 apiVersion: v1
 kind: Pod
 metadata:
-  name: django-big-transformer-bert-tok
+  name: conala-tiny-transformer-custom-tok-75-seq-len-850-vocab
   namespace: 2209560gproject
 spec:
   volumes:
@@ -204,7 +204,7 @@ spec:
     node-role.ida/gpu2080ti: "true"
   containers:
   - env: 
-    name: django-big-transformer-bert-tok
+    name: conala-tiny-transformer-custom-tok-75-seq-len-850-vocab
     image: aquaktus/docker_ml_by_carlos:v6
     resources:
       requests:
@@ -220,36 +220,36 @@ spec:
       - 'python3'     
     args:
       - '/nfs/phd_by_carlos/notebooks/main_autoReg.py'
-      - '--src_train_fp'
-      - '/nfs/phd_by_carlos/notebooks/datasets/django_folds/django.fold1-10.train.src'
-      - '--tgt_train_fp'
-      - '/nfs/phd_by_carlos/notebooks/datasets/django_folds/django.fold1-10.train.tgt'
-      - '--src_test_fp'
-      - '/nfs/phd_by_carlos/notebooks/datasets/django_folds/django.fold1-10.test.src'
-      - '--tgt_test_fp'
-      - '/nfs/phd_by_carlos/notebooks/datasets/django_folds/django.fold1-10.test.tgt'
+      - '--dataset_prefix'
+      - '/nfs/phd_by_carlos/notebooks/datasets/django_folds/django.fold1-10'
+      - '--train_prefix'
+      - '.train'
+      - '--valid_prefix'
+      - '.valid'
+      - '--test_prefix'
+      - '.test'
+      - '--src_prefix'
+      - '.src'
       - '--steps'
-      - '500000'
+      - '200000'
       - '--log_interval'
       - '100'
       - '--max_seq_len'
-      - '50'
-      - '--vocab_size'
-      - '30522'
+      - '75'
       - '--eval_interval'
       - '5000'
       - '--save_interval'
       - '5000'
       - '--layers'
-      - '12'
+      - '2'
       - '--att_heads'
-      - '12'
+      - '4'
       - '--embed_dim'
-      - '768'
+      - '512'
       - '--dim_feedforward'
-      - '3072'
+      - '1024'
       - '--output_dir'
-      - '/nfs/phd_by_carlos/notebooks/django-big-transformer-BERT-tok'
+      - '/nfs/phd_by_carlos/notebooks/django-tiny-transformer-valid-testing'
     volumeMounts: 
     - mountPath: /nfs/
       name: nfs-access
