@@ -1,7 +1,10 @@
 from datetime import datetime
 from torchtext.data import Field, BucketIterator
 import re
-from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
+import os
+
+def batch_filter_ids(batch_list, unwanted_ids):
+    return [[id for id in l if id not in unwanted_ids] for l in batch_list]
 
 def super_print(filename):
     '''
@@ -17,7 +20,11 @@ def super_print(filename):
             '''*args and **kwargs are the arguments supplied 
             to the overridden function'''
             #use with statement to open, write to, and close the file safely
-            with open(filename,'a', encoding="utf-8") as outputfile:
+            if os.path.exists(filename):
+                action = 'a' # append if already exists
+            else:
+                action = 'w' 
+            with open(filename,action, encoding="utf-8") as outputfile:
                 now = datetime.now()
                 dt_string = now.strftime("%d/%m/%Y %H:%M:%S")
                 outputfile.write("[{}] ".format(dt_string))
@@ -98,12 +105,3 @@ def samples_to_dataset(samples):
         
     dataset = torchtext.data.Dataset(examples,fields={"src":src_field, "tgt":tgt_field})
     return dataset
-
-def nltk_bleu(refrence, prediction):
-    """
-    Implementation from ReCode
-    and moses multi belu script sets BLEU to 0.0 if len(toks) < 4
-    """
-    ngram_weights = [0.25] * min(4, len(refrence))
-    return sentence_bleu([refrence], prediction, weights=ngram_weights, 
-                          smoothing_function=SmoothingFunction().method3)

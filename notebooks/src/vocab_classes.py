@@ -1,4 +1,5 @@
 import collections
+from transformers import BertTokenizer
 
 class Shared_Vocab():
     def __init__(self, data, vocab_size, tokenizer_fn, use_OOVs=False):
@@ -7,6 +8,11 @@ class Shared_Vocab():
         self.vocab_size = vocab_size  - len(self.stoi)
         self.tokenizer_fn = tokenizer_fn
         self.use_OOVs = use_OOVs
+        
+        self.SOS = self.stoi["<sos>"]
+        self.EOS = self.stoi["<eos>"]
+        self.PAD = self.stoi["<pad>"]
+        self.UNK = self.stoi["<unk>"]
         
         self.OOV_stoi = {}
         self.OOV_itos = {}
@@ -74,17 +80,17 @@ class Shared_Vocab():
                     IDs.append(self.stoi["<unk>"])
         return IDs
     
-    def decode(self, ids, OOV_ids=[]):
+    def decode(self, ids, OOV_ids=[], copy_marker="(COPY)"):
         OOVs = self.OOV_ids2OOVs(OOV_ids)
         extended_itos = self.itos.copy()
-        extended_itos += [OOV+"(COPY)" for OOV in OOVs]
+        extended_itos += [OOV+copy_marker for OOV in OOVs]
         return " ".join([extended_itos[id] for id in ids if id<len(extended_itos)])
     
-    def decode_input(self, ids, OOVs=[]):
-        return self.decode(ids, OOVs)
+    def decode_input(self, ids, OOVs=[], copy_marker="(COPY)"):
+        return self.decode(ids, OOVs,copy_marker=copy_marker)
     
-    def decode_output(self, ids, OOVs=[]):
-        return self.decode(ids, OOVs)
+    def decode_output(self, ids, OOVs=[], copy_marker="(COPY)"):
+        return self.decode(ids, OOVs,copy_marker=copy_marker)
     
     def OOV_ids2OOVs(self, OOV_ids):
         return [self.OOV_itos[OOV_id] if OOV_id in self.OOV_itos else "<unk>" for OOV_id in OOV_ids]
@@ -97,6 +103,23 @@ class Shared_Vocab():
             self.encode_input(src)
     
     
-class Separate_Vocab():
-    def __init__(self, data, vocab_size, src_tokenizer_fn, tgt_tokenizer_fn):
-        pass
+class BERT_Vocab():
+    def __init__(self):
+        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        special_tokens_dict = {'bos_token': '[unused0]','eos_token': '[unused1]'}
+        self.tokenizer.add_special_tokens(special_tokens_dict)
+        self.SOS = self.tokenizer.bos_token_id
+        self.EOS = self.tokenizer.eos_token_id
+        self.PAD = self.tokenizer.pad_token_id
+        self.UNK = self.tokenizer.unk_token_id
+        
+        self.vocab_size = self.tokenizer.vocab_size
+        
+    def encode_output(self, string, OOV_ids=[]):
+        return self.tokenizer.encode(string)[1:-1]
+    def encode_input(self, string):
+        return self.tokenizer.encode(string)[1:-1], []
+    def decode_input(self, ids, OOVs=[]):
+        return " ".join(self.tokenizer.convert_ids_to_tokens(ids))
+    def decode_output(self, ids, OOVs=[]):
+        return " ".join(self.tokenizer.convert_ids_to_tokens(ids))
