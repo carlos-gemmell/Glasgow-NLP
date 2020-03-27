@@ -1,4 +1,5 @@
 import numpy as np
+import random
 
 def lev(matrix, i, j, compare):
     m00 = matrix[i-1, j-1]
@@ -135,5 +136,88 @@ def perform_edits(s, edits, gen_tok_id=4):
     
     
     
+def lcs(X, Y): 
+    m = len(X) 
+    n = len(Y) 
+    L = [[0 for x in range(n+1)] for x in range(m+1)] 
     
+  
+    # Following steps build L[m+1][n+1] in bottom up fashion. Note 
+    # that L[i][j] contains length of LCS of X[0..i-1] and Y[0..j-1]  
+    for i in range(m+1): 
+        for j in range(n+1): 
+            if i == 0 or j == 0: 
+                L[i][j] = 0
+            elif X[i-1] == Y[j-1]: 
+                L[i][j] = L[i-1][j-1] + 1
+            else: 
+                L[i][j] = max(L[i-1][j], L[i][j-1]) 
+  
+    # Following code is used to print LCS 
+    index = L[m][n] 
     
+    return index, L
+    
+def lcs_traceback(L, X, Y):
+    '''
+    L is the traceback matrix.
+    X and Y are the strings
+    '''
+    actions = []
+    i = len(X)
+    j = len(Y)
+    index = L[i][j] 
+    while i > 0 and j > 0: 
+  
+        # If current character in X[] and Y are same, then 
+        # current character is part of LCS 
+        if X[i-1] == Y[j-1]: 
+            i-=1
+            j-=1
+            index-=1
+  
+        # If not same, then find the larger of two and 
+        # go in the direction of larger value 
+        elif L[i-1][j] >= L[i][j-1]: 
+            i-=1
+            actions.append(("Delete", X[i],i))
+        else: 
+            j-=1
+            actions.append(("Insert", Y[j],i))
+    return actions
+
+def bi_directional_traceback(start, target):
+    if len(start) == 0:
+        return list(set([("Insert", t, 0) for t in target]))
+    if len(target) == 0:
+        return list(set([("Delete", t, 0) for t in start]))
+    if start == target:
+        return [("None", None, None)]
+    score, matrix = lcs(start, target) 
+    actions = lcs_traceback(matrix, start, target)
+    actions = [(i,j,min(len(start),k)) for i, j, k in actions]
+
+    r_start = start[::-1]
+    r_target = target[::-1]
+    score, matrix = lcs(r_start, r_target) 
+    reverse_actions = lcs_traceback(matrix, r_start,r_target)
+    corrected_actions = [(i,j,max(0,len(start)-k-1)) for i, j, k in reverse_actions]
+
+    return list(set(actions + corrected_actions))
+
+def perform_edit(old_seq, edit):
+    seq = list(old_seq)
+    action, tok, pos = edit
+    if action == "Insert":
+        seq.insert(pos,tok)
+    if action == "Delete" and pos < len(seq):
+        del seq[pos]
+    return seq
+
+def random_edit(original_string, v_chars):
+    seq = list(original_string)
+    action = random.choice(["Insert", "Delete"])
+    tok = random.choice(v_chars)
+    pos = random.choice(list(range(len(seq)+1)))
+    edit = (action, tok, pos)
+    return perform_edit(seq, edit)

@@ -89,7 +89,7 @@ class Model_Trainer():
 #             print("Keyboard Interrupt!")
 #             return self.model.stats
         
-    def evaluate(self, test_iterator):
+    def evaluate(self, test_iterator, save_file="eval_samples.txt"):
         self.model.eval()
         with torch.no_grad():
             eval_scores = []
@@ -98,6 +98,6 @@ class Model_Trainer():
                 batch_eval_outputs = self.model.eval_step(batch, self.vocab)
                 eval_scores += batch_eval_outputs
         if self.output_dir:
-            self.model.save_eval_results(eval_scores, os.path.join(self.output_dir, "eval_samples.txt"))
+            self.model.save_eval_results(eval_scores, os.path.join(self.output_dir, save_file))
         return eval_scores
     

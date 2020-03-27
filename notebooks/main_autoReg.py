@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 from torchtext.data import Field, BucketIterator
 import argparse
+import random
 
 # a default run: python3 main_autoReg.py --src_train_fp datasets/django_folds/django.fold1-10.train.src --tgt_train_fp datasets/django_folds/django.fold1-10.train.tgt --src_test_fp datasets/django_folds/django.fold1-10.test.src --tgt_test_fp datasets/django_folds/django.fold1-10.test.tgt --eval_file django_small_transformer.txt
 
@@ -26,16 +27,25 @@ parser.add_argument('--log_interval', type=int, default=100)
 parser.add_argument('--lr', type=int, default=0.005)
 # parser.add_argument('--eval_file', type=str, default="model_eval_outputs.txt")
 parser.add_argument('--output_dir', type=str, required=True)
-parser.add_argument('--src_train_fp', type=str, default="foo.txt")
-parser.add_argument('--tgt_train_fp', type=str, default="foo.txt")
-parser.add_argument('--src_test_fp', type=str, default="foo.txt")
-parser.add_argument('--tgt_test_fp', type=str, default="foo.txt")
+# parser.add_argument('--src_train_fp', type=str, default="foo.txt")
+# parser.add_argument('--tgt_train_fp', type=str, default="foo.txt")
+# parser.add_argument('--src_test_fp', type=str, default="foo.txt")
+# parser.add_argument('--tgt_test_fp', type=str, default="foo.txt")
+parser.add_argument('--dataset_prefix', type=str, default="start-here-")
+parser.add_argument('--train_prefix', type=str, default="train")
+parser.add_argument('--test_prefix', type=str, default="test")
+parser.add_argument('--valid_prefix', type=str, default="valid")
+parser.add_argument('--src_prefix', type=str, default="src")
+parser.add_argument('--tgt_prefix', type=str, default="tgt")
 parser.add_argument('--concat_retrieval_to_src', type=bool, default=False)
 parser.add_argument('--concat_src', type=bool, default=False)
 parser.add_argument('--concat_tgt', type=bool, default=True)
 parser.add_argument('--tokenization', type=str, default="custom")
 parser.add_argument('--from_pretrained', type=bool, default=False)
 parser.add_argument('--sort_train_dataset', type=bool, default=False)
+parser.add_argument('--no_copy', dest='copy', action='store_false')
+parser.add_argument('--no_valid', dest='valid', action='store_false')
+parser.set_defaults(copy=True, valid=True)
 
 args = parser.parse_args()
 
@@ -43,10 +53,20 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if device == "cuda":
     torch.cuda.set_device(0) # choose GPU from nvidia-smi 
 print("Using:", device)
+print("copy:", args.copy)
 
-train_samples = SRC_TGT_pairs(args.src_train_fp, args.tgt_train_fp, max_seq_len=args.max_seq_len).samples
+src_train_fp = args.dataset_prefix + args.train_prefix + args.src_prefix
+tgt_train_fp = args.dataset_prefix + args.train_prefix + args.tgt_prefix
+train_samples = SRC_TGT_pairs(src_train_fp, tgt_train_fp, max_seq_len=args.max_seq_len).samples
 
-test_samples = SRC_TGT_pairs(args.src_test_fp, args.tgt_test_fp, max_seq_len=args.max_seq_len).samples
+if args.valid:
+    src_valid_fp = args.dataset_prefix + args.valid_prefix + args.src_prefix
+    tgt_valid_fp = args.dataset_prefix + args.valid_prefix + args.tgt_prefix
+    valid_samples = SRC_TGT_pairs(src_valid_fp, tgt_valid_fp, max_seq_len=args.max_seq_len).samples
+
+src_test_fp = args.dataset_prefix + args.test_prefix + args.src_prefix
+tgt_test_fp = args.dataset_prefix + args.test_prefix + args.tgt_prefix
+test_samples = SRC_TGT_pairs(src_test_fp, tgt_test_fp, max_seq_len=args.max_seq_len).samples
 
 if args.concat_retrieval_to_src:
     retriever = PyLuceneRetriever()
@@ -70,6 +90,8 @@ model = AutoregressiveTransformer(vocab_size=args.vocab_size, embed_dim=args.emb
 model.init_train_params(vocab, lr=args.lr)
 
 train_dataset = model.data2dataset(train_samples, vocab)
+if args.valid:
+    valid_dataset = model.data2dataset(valid_samples, vocab)
 test_dataset = model.data2dataset(test_samples, vocab)
 
 train_iterator = BucketIterator(
@@ -88,9 +110,21 @@ test_iterator = BucketIterator(
     sort_key = model.sample_order_fn,
     device = device)
 
-trainer = Model_Trainer(model, vocab, test_iterator=test_iterator, output_dir=args.output_dir)
+if args.valid:
+    valid_iterator = BucketIterator(
+        valid_iterator,
+        batch_size = args.batch_size,
+        sort=True,
+        sort_key = model.sample_order_fn,
+        device = device)
+else:
+    valid_iterator = test_iterator
+
+trainer = Model_Trainer(model, vocab, test_iterator=valid_iterator, output_dir=args.output_dir)
 
 train_logs = trainer.train(model, train_iterator, args.steps, log_interval=args.log_interval, \
                            eval_interval=args.eval_interval, save_interval=args.save_interval)
 
-print(train_logs)
+outputs = trainer.evaluate(test_iterator, save_file="eval_test_samples.txt")
+avg_BLEU = np.average([out["BLEU"] for out in outputs])
+print(f"Final test BLEU: {avg_BLEU:.2f}")
