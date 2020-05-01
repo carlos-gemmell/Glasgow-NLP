@@ -6,32 +6,35 @@ import json
 import autopep8
 
 
-python_statements = ['print_statement',
- 'continue_statement',
- 'assert_statement',
- 'decorated_definition',
- 'return_statement',
- 'for_statement',
- 'expression_statement',
- 'while_statement',
- 'import_statement',
- 'import_from_statement',
- 'class_definition',
- 'nonlocal_statement',
- 'exec_statement',
- 'with_statement',
- 'if_statement',
+python_newline_statements = ['assert_statement',
  'break_statement',
- 'global_statement',
- 'function_definition',
+ 'class_definition',
+ 'continue_statement',
+ 'decorated_definition',
+ 'decorator',
  'delete_statement',
+ 'except_clause',
+ 'exec_statement',
+ 'expression_statement',
+ 'for_statement',
+ 'function_definition',
  'future_import_statement',
+ 'global_statement',
+ 'if_statement',
+ 'import_from_statement',
+ 'import_statement',
+ 'nonlocal_statement',
  'pass_statement',
- 'try_statement',
+ 'print_statement',
  'raise_statement',
- 'decorator']
+ 'return_statement',
+ 'try_statement',
+ 'while_statement',
+ 'with_statement']
 
-pytohn_non_space_nodes = ["_string_start", "_string_content", "_string_end"]
+python_spaced_nodes = ["def", "if", "while", "for", "in", "not", "as", "return",
+                      "continue", "break", "from", "import", "raise", "global",
+                      "class"]
 
 def sub_str_from_coords(string, start, end):
     lines = string.split("\n")
@@ -50,7 +53,7 @@ class Tree_Sitter_ENFA(EpsilonNFA):
         super().__init__()
         self.prefix = 0
         self.externals = [x["name"] for x in grammar["externals"]]
-        self.punct_dict = {",":"COMMA", '\"':"QUOTE","\'":"QUOTE"}
+        self.punct_dict = {",":"COMMA", '\\':r"\\"}
         self.node_types = grammar["rules"]
         self.start_state = State("START")
         self.match_state = State("MATCH")
@@ -91,7 +94,7 @@ class Tree_Sitter_ENFA(EpsilonNFA):
             symbol = Symbol(member["value"])
             self.add_transition(enter_state, symbol, exit_state)
 
-        if member["type"] in ["FIELD", "PREC","PREC_LEFT","PREC_RIGHT","ALIAS"]:
+        if member["type"] in ["FIELD", "PREC","PREC_LEFT","PREC_RIGHT","ALIAS", "TOKEN"]:
             self.add_transitions(member["content"], enter_state, exit_state)
 
         if member["type"] == "SEQ":
@@ -185,9 +188,9 @@ class Node_Processor():
         self.counter = 0
         if language == "python":
             global python_statements
-            self.new_line_statements = python_statements
+            self.new_line_statements = python_newline_statements
             global pytohn_non_space_nodes
-            self.non_space_nodes = pytohn_non_space_nodes
+            self.spaced_nodes = python_spaced_nodes
         
     def to_string(self, node, indent=""):
         if node.children == []:
@@ -201,7 +204,7 @@ class Node_Processor():
                 if child.type in self.new_line_statements:
                     child_text += indent
                 child_text += self.to_string(child, indent) 
-                if child.type not in self.non_space_nodes:
+                if child.type in self.spaced_nodes:
                     child_text += " "
                 if child.type in self.new_line_statements:
                     child_text += "\n" 
