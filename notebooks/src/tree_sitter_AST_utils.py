@@ -4,11 +4,13 @@ from tree_sitter import Language, Parser, Node
 import networkx as nx
 import json
 import autopep8
+import sre_parse
 
 
 python_newline_statements = ['assert_statement',
  'break_statement',
  'class_definition',
+ 'comment',
  'continue_statement',
  'decorated_definition',
  'decorator',
@@ -59,7 +61,7 @@ class Tree_Sitter_ENFA(EpsilonNFA):
         self.match_state = State("MATCH")
         self.add_start_state(self.start_state)
         self.add_final_state(self.match_state)
-        self.add_transitions(self.node_types[member_name], self.start_state, self.match_state)
+        self.add_transitions(self.node_types.get(member_name), self.start_state, self.match_state)
         
     def plot_dot(self):
         graph = self.to_networkx()
@@ -75,7 +77,11 @@ class Tree_Sitter_ENFA(EpsilonNFA):
         
     def add_transitions(self, member, enter_state, exit_state):
         self.prefix += 1
-
+        
+        if member == None:
+            self.add_transition(enter_state, Epsilon(), exit_state)
+            return
+        
         if member["type"] == "BLANK":
             self.add_transition(enter_state, Epsilon(), exit_state)
 
@@ -91,8 +97,10 @@ class Tree_Sitter_ENFA(EpsilonNFA):
             self.add_transition(enter_state, symbol, exit_state)
 
         if member["type"] == "PATTERN":
-            symbol = Symbol(member["value"])
-            self.add_transition(enter_state, symbol, exit_state)
+#             symbol = Symbol("regex:"+member["value"])
+            memb = regex_to_member(member["value"])
+            self.add_transitions(memb, enter_state, exit_state)
+#             self.add_transition(enter_state, symbol, exit_state)
 
         if member["type"] in ["FIELD", "PREC","PREC_LEFT","PREC_RIGHT","ALIAS", "TOKEN"]:
             self.add_transitions(member["content"], enter_state, exit_state)
@@ -137,7 +145,10 @@ class Tree_Sitter_ENFA(EpsilonNFA):
             possible_transitions.remove("epsilon")
         except:
             pass
-        return any([self.is_final_state(x) for x in current_states]), possible_transitions
+        
+        if any([self.is_final_state(x) for x in current_states]):
+            possible_transitions.update(['<REDUCE>'])
+        return possible_transitions
 
 
 class StringTSNode():
@@ -194,7 +205,10 @@ class Node_Processor():
         
     def to_string(self, node, indent=""):
         if node.children == []:
-            return node.text
+            if node.text == "":
+                return node.type
+            else:
+                return node.text
         else:
             child_text = ""
             if node.type == "block":
@@ -240,3 +254,87 @@ class Node_Processor():
         pdot = nx.drawing.nx_pydot.to_pydot(graph)
         png_str = pdot.write_png(path)
         display(Image(filename=path))
+        
+        
+        
+def member_vocab(member):
+    if member["type"] in ["REPEAT", "REPEAT1", "ALIAS", "FIELD", 
+                          "PREC","PREC_LEFT","PREC_RIGHT", "TOKEN"]:
+        return member_vocab(member["content"])
+    
+    if member["type"] in ["SEQ", "CHOICE"]:
+        grammar_tokens = set()
+        grammar_patterns = set()
+        for child in member["members"]:
+            new_tokens, new_patterns = member_vocab(child)
+            grammar_tokens.update(new_tokens)
+            grammar_patterns.update(new_patterns)
+        return grammar_tokens, grammar_patterns
+        
+    if member["type"] in ["STRING"]:
+        return set([member["value"]]), set()
+    
+    if member["type"] in ["SYMBOL"]:
+        return set([member["name"]]), set()
+    
+    if member["type"] == "PATTERN":
+        return set(), set([member["value"]])
+    return set(), set()
+
+def get_grammar_vocab(grammar):
+    vocab=set(grammar["rules"].keys())
+    externals = [x["name"] for x in grammar["externals"]]
+    grammar_patterns = set()
+    token_list = list(vocab)
+    for token in token_list:
+        new_tokens, new_patterns = member_vocab(grammar["rules"][token])
+        vocab.update(new_tokens)
+        grammar_patterns.update(new_patterns)
+    return vocab, grammar_patterns
+
+
+def regex_to_member(regex_string):
+    sre_tree = sre_parse.parse(regex_string)
+    command = None # this is implicitly a sequence
+    
+    def sre_member_to_TS_member(command, content):
+        if command == None:
+            member = {"type": "SEQ",
+                      "members": [sre_member_to_TS_member(sub_command, sub_content) for sub_command, sub_content in content]
+                     }
+            return member
+        if str(command) in ["BRANCH"]:
+            member = {"type": "CHOICE",
+                      "members": [sre_member_to_TS_member(None, sub_content) for sub_content in content[1]]
+                     }
+            return member
+        if str(command) in ["IN"]:
+            member = {"type": "CHOICE",
+                      "members": [sre_member_to_TS_member(sub_command, sub_content) for sub_command, sub_content in content]
+                     }
+            return member
+        if str(command) in ["RANGE"]:
+            member = {"type": "CHOICE",
+                      "members": [{"type":"STRING","value":chr(ascii_val)} for ascii_val in range(content[0], content[1]+1)]
+                     }
+            return member
+        if str(command) in ["LITERAL"]:
+            member = {"type": "STRING",
+                      "value": chr(content)
+                     }
+            return member
+        
+        if str(command) in ["MAX_REPEAT"]:
+            # I'm currently not handling situations where a minimum number of repetitions need to happen or a maximum, this should be fixed here if necessary
+            minimum_repeat, max_repeat, content = content
+            if max_repeat != 0 and str(max_repeat) != "MAXREPEAT":
+                member = {"type": "CHOICE",
+                          "members": [{"type": "BLANK"},sre_member_to_TS_member(None, content)]
+                         }
+            else:
+                member = {"type": "REPEAT" + ("1" if minimum_repeat == 1 else ""),
+                          "content": sre_member_to_TS_member(None, content)
+                         }
+            return member
+    
+    return sre_member_to_TS_member(command, sre_tree)
