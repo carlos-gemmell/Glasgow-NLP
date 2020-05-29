@@ -1,16 +1,42 @@
 from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
 from .useful_utils import chunks
 import tqdm
+import numpy as np
 def is_interactive():
     import __main__ as main
     return not hasattr(main, '__file__')
 if is_interactive():
     import tqdm.notebook as tqdm 
+    
+def RecipRank(q_rel_idx, scores):
+    """
+    q_rel_idx: int: index of the correct document matching the query in the scores array
+    scores: [int]: scores given to all docs w.r.t the query
+    """
+    q_rel_score = scores[q_rel_idx]
+    rank = sum([1 for score in scores if score>q_rel_score])
+    return 1/(rank+1)
+
+def doc_search_subtask(queries, docs, lookup, scoring_fn):
+    """
+    We are assuming each query at index i matches only 1 document in the collection also located at index i
+    queries: [int]*n
+    docs: [int]*m
+    scoring_fn: fn(int,[int]*m, lookup)->[float]*m
+    """
+    RRs = []
+    for i, query in enumerate(queries):
+        scores = scoring_fn(query, docs[i])
+        RRs.append(RecipRank(i, scores))
+    MRR = np.average(RRs)
+    return {"MRR":MRR}
 
 def nltk_bleu(refrence, prediction):
     """
     Implementation from ReCode
     and moses multi belu script sets BLEU to 0.0 if len(toks) < 4
+    refrence: [(str)]
+    prediction: [(str)]
     """
     ngram_weights = [0.25] * min(4, len(refrence))
     return sentence_bleu([refrence], prediction, weights=ngram_weights, 

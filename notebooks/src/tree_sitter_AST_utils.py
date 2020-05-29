@@ -156,24 +156,118 @@ class StringTSNode():
         self.type = node_type
         self.children = children
         self.text = text
+        
+
+class PartialNode():
+    def __init__(self, parent, node_type, ENFA, node_builder, is_textual, text=""):
+        self.parent = parent
+        self.type = node_type
+        self.ENFA = ENFA
+        self.children = []
+        self.text = text
+        self.is_textual = is_textual
+        self.node_builder = node_builder
+    
+        
+    @property
+    def is_complete(self):
+        child_sequence = [child.type for child in self.children]
+        children_expansions = self.ENFA.validate_sequence(child_sequence)
+        text_expansions = self.ENFA.validate_sequence(list(self.text))
+        children_complete = "<REDUCE>" in children_expansions
+        text_complete = "<REDUCE>" in text_expansions
+        return children_complete or text_complete
+    
+    @property
+    def explicit_expansions(self):
+        # make a check for the is_textual property since the requirements are different for it.
+        if self.is_textual:
+            char_sequence = list(self.text)
+            expansions = self.ENFA.validate_sequence(char_sequence)
+            return expansions
+        else:
+            child_sequence = [child.type for child in self.children]
+            expansions = self.ENFA.validate_sequence(child_sequence)
+            return expansions
+    
+    def is_valid_pattern_expansion(self, expansion_token):
+        if self.is_textual and expansion_token != "<REDUCE>":                
+            char_sequence = list(self.text+expansion_token)
+            expansions = self.ENFA.validate_sequence(char_sequence)
+            if expansions != set():
+                return True
+            return False
+        else:
+            if expansion_token in self.explicit_expansions:
+                return True
+            return False
+    
+    def expansions_mask(self, expansion_vocab):
+        return [self.is_valid_pattern_expansion(token) for token in expansion_vocab]
+    
+    def add_expansion(self, expansion_token):
+        is_valid = self.is_valid_pattern_expansion(expansion_token)
+        assert is_valid, f"{expansion_token} is not currently a valid expansion for {self.type}. "+\
+                                                            f"possible explicit ones: {self.explicit_expansions}"
+        if self.is_textual:
+            self.text += expansion_token
+#             self.children.append(transition_pattern)
+            return self
+        else:
+            new_child = node_builder.create(self, expansion_token)
+            self.children.append(new_child)
+            return new_child
+        
+
+class NodeBuilder():
+    def __init__(self, grammar):
+        self.grammar = grammar
+        rule_node_types = grammar["rules"].keys()
+        self.node_ENFAs = {node_type: Tree_Sitter_ENFA(node_type, self.grammar) for node_type in rule_node_types}
+        self.vocab, self.grammar_paterns = get_grammar_vocab(grammar)
+        
+        for node_type in self.vocab:
+            if node_type not in self.node_ENFAs:
+                self.node_ENFAs[node_type] = Tree_Sitter_ENFA(None, self.grammar)   
+    @staticmethod            
+    def member_has_pattern(member):
+        if member == None:
+            return False
+        elif member["type"] == "PATTERN":
+            return True
+        elif member["type"] in ["SEQ", "CHOICE"]:
+            return any([NodeBuilder.member_has_pattern(sub_member) for sub_member in member["members"]])
+        elif member["type"] in ["FIELD", "PREC","PREC_LEFT","PREC_RIGHT","ALIAS", "TOKEN", "REPEAT", "REPEAT1"]:
+            return NodeBuilder.member_has_pattern(member["content"])
+        
+        return False
+    
+    def create(self, parent, node_type, text=""):
+        is_textual = self.member_has_pattern(self.grammar["rules"].get(node_type))
+        return PartialNode(parent, node_type, self.node_ENFAs[node_type], self, is_textual, text)
 
 
 class Code_Parser():
-    def __init__(self, language="python"):
+    def __init__(self, language="python", grammar_path):
         Language.build_library('build/my-languages.so',[
                 'src/tree-sitter/tree-sitter-javascript',
                 'src/tree-sitter/tree-sitter-python'])
         
         LANGUAGE = Language('build/my-languages.so', language)
+        
+        with open(grammar_path, "r") as grammar_file:
+            self.grammar = json.load(grammar_file)
+        
         self.TS_parser = Parser()
         self.TS_parser.set_language(LANGUAGE)
+        self.node_builder = NodeBuilder(self.grammar)
         
     def parse_to_string_tree(self, code_str):
         tree = self.TS_parser.parse(bytes(code_str, "utf8"))
         root_node = tree.root_node
         return self.TSNode_to_StringTSNode(root_node, code_str)
         
-    def TSNode_to_StringTSNode(self, TSNode, code_str):
+    def TSNode_to_PartialTSNode(self, TSNode, code_str):
         if TSNode.type == "string":
             node_text = sub_str_from_coords(code_str, TSNode.start_point, TSNode.end_point)
             children = [StringTSNode("_string_start", children=[], text='"'),
@@ -202,6 +296,16 @@ class Node_Processor():
             self.new_line_statements = python_newline_statements
             global pytohn_non_space_nodes
             self.spaced_nodes = python_spaced_nodes
+            
+    def to_sequence(self, node, tokenize_fn):
+        node_sequence = [node.type]
+        if node.children == []:
+            node_sequence.append(tokenize_fn(node.text))
+        else:
+            for child in node.children:
+                node_sequence += self.to_sequence(child, tokenize_fn)
+        node_sequence.append("<REDUCE>")
+        return node_sequence
         
     def to_string(self, node, indent=""):
         if node.children == []:
