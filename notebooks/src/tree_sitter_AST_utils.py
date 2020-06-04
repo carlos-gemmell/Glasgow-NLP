@@ -5,6 +5,7 @@ import networkx as nx
 import json
 import autopep8
 import sre_parse
+import traceback
 
 
 python_newline_statements = ['assert_statement',
@@ -17,6 +18,7 @@ python_newline_statements = ['assert_statement',
  'delete_statement',
  'except_clause',
  'exec_statement',
+ 'else_clause',
  'expression_statement',
  'for_statement',
  'function_definition',
@@ -36,7 +38,7 @@ python_newline_statements = ['assert_statement',
 
 python_spaced_nodes = ["def", "if", "while", "for", "in", "not", "as", "return",
                       "continue", "break", "from", "import", "raise", "global",
-                      "class"]
+                      "class", "else"]
 
 def sub_str_from_coords(string, start, end):
     lines = string.split("\n")
@@ -95,6 +97,8 @@ class Tree_Sitter_ENFA(EpsilonNFA):
         if member["type"] == "STRING":
             symbol = Symbol(member["value"])
             self.add_transition(enter_state, symbol, exit_state)
+#             memb = regex_to_member(member["value"])
+#             self.add_transitions(memb, enter_state, exit_state)
 
         if member["type"] == "PATTERN":
 #             symbol = Symbol("regex:"+member["value"])
@@ -183,8 +187,10 @@ class PartialNode():
         # make a check for the is_textual property since the requirements are different for it.
         if self.is_textual:
             char_sequence = list(self.text)
-            expansions = self.ENFA.validate_sequence(char_sequence)
-            return expansions
+            char_expansions = self.ENFA.validate_sequence(char_sequence)
+            token_expansions = self.ENFA.validate_sequence([self.text])        # this needs to be fixed
+            char_expansions.update(token_expansions)
+            return char_expansions
         else:
             child_sequence = [child.type for child in self.children]
             expansions = self.ENFA.validate_sequence(child_sequence)
@@ -193,8 +199,10 @@ class PartialNode():
     def is_valid_pattern_expansion(self, expansion_token):
         if self.is_textual and expansion_token != "<REDUCE>":                
             char_sequence = list(self.text+expansion_token)
-            expansions = self.ENFA.validate_sequence(char_sequence)
-            if expansions != set():
+            char_expansions = self.ENFA.validate_sequence(char_sequence)
+            token_expansions = self.ENFA.validate_sequence([expansion_token])
+            char_expansions.update(token_expansions)
+            if char_expansions != set():
                 return True
             return False
         else:
@@ -214,9 +222,39 @@ class PartialNode():
 #             self.children.append(transition_pattern)
             return self
         else:
-            new_child = node_builder.create(self, expansion_token)
+            new_child = self.node_builder.create(self, expansion_token, "")
             self.children.append(new_child)
             return new_child
+        
+class PartialTree():
+    def __init__(self, root_node_type, node_builder):
+        self.full_seq = [root_node_type]
+        self.node_builder = node_builder
+        self.root = node_builder.create(None, root_node_type)
+        self.pointer = self.root
+        
+    def add_action(self,expansion_token):
+        is_valid = self.pointer.is_valid_pattern_expansion(expansion_token)
+        assert is_valid, f"{expansion_token} is not currently a valid expansion for {self.pointer.type}. "+\
+                                                            f"possible explicit ones: {self.pointer.explicit_expansions}"
+        
+        if expansion_token == "<REDUCE>" and self.pointer.parent == None:
+            print("Tree generation terminated")
+            return None
+    
+        if expansion_token == "<REDUCE>":
+            self.pointer = self.pointer.parent
+        else:
+            new_child = self.pointer.add_expansion(expansion_token)
+            self.pointer = new_child
+        self.full_seq.append(expansion_token)
+
+        return self.pointer
+    
+    @property
+    def pointer_explicit_expansions(self):
+        self.pointer.explicit_expansions
+    
         
 
 class NodeBuilder():
@@ -233,10 +271,12 @@ class NodeBuilder():
     def member_has_pattern(member):
         if member == None:
             return False
-        elif member["type"] == "PATTERN":
+        elif member["type"] in ["PATTERN","STRING","BLANK"]:
             return True
         elif member["type"] in ["SEQ", "CHOICE"]:
-            return any([NodeBuilder.member_has_pattern(sub_member) for sub_member in member["members"]])
+#             print([NodeBuilder.member_has_pattern(sub_member) for sub_member in member["members"]])
+#             print(member)
+            return all([NodeBuilder.member_has_pattern(sub_member) for sub_member in member["members"]])
         elif member["type"] in ["FIELD", "PREC","PREC_LEFT","PREC_RIGHT","ALIAS", "TOKEN", "REPEAT", "REPEAT1"]:
             return NodeBuilder.member_has_pattern(member["content"])
         
@@ -248,44 +288,53 @@ class NodeBuilder():
 
 
 class Code_Parser():
-    def __init__(self, language="python", grammar_path):
+    def __init__(self, grammar, language="python"):
         Language.build_library('build/my-languages.so',[
                 'src/tree-sitter/tree-sitter-javascript',
                 'src/tree-sitter/tree-sitter-python'])
         
         LANGUAGE = Language('build/my-languages.so', language)
         
-        with open(grammar_path, "r") as grammar_file:
-            self.grammar = json.load(grammar_file)
+        self.grammar = grammar
         
         self.TS_parser = Parser()
         self.TS_parser.set_language(LANGUAGE)
         self.node_builder = NodeBuilder(self.grammar)
-        
-    def parse_to_string_tree(self, code_str):
+    
+    def code_to_sequence(self, code_str):
         tree = self.TS_parser.parse(bytes(code_str, "utf8"))
         root_node = tree.root_node
-        return self.TSNode_to_StringTSNode(root_node, code_str)
-        
-    def TSNode_to_PartialTSNode(self, TSNode, code_str):
+        sequence = self.TSTree_to_sequence(root_node, code_str)
+        return sequence
+    
+    def TSTree_to_sequence(self, TSNode, code_str):
+        node_sequence = [TSNode.type]
         if TSNode.type == "string":
+            node_text = sub_str_from_coords(code_str, TSNode.start_point, TSNode.end_point)[1:-1]
+            node_sequence += ["_string_start",'"',"<REDUCE>"]
+            node_sequence += ["_string_content",node_text,"<REDUCE>"]
+            node_sequence += ["_string_end",'"',"<REDUCE>"]
+        elif TSNode.children == []:
             node_text = sub_str_from_coords(code_str, TSNode.start_point, TSNode.end_point)
-            children = [StringTSNode("_string_start", children=[], text='"'),
-                        StringTSNode("_string_content", children=[], text=node_text[1:-1]),
-                        StringTSNode("_string_end", children=[], text='"')]
-            return StringTSNode("string", children=children, text="")
-        
-        if TSNode.children == []:
-            node_text = sub_str_from_coords(code_str, TSNode.start_point, TSNode.end_point)
-            node = StringTSNode(TSNode.type, children=[], text=node_text)
-            return node
-        else:
-            parent_node = StringTSNode(TSNode.type)
-            string_TSNode_children = []
+            if TSNode.type != node_text:
+                node_sequence.append(node_text)
+        elif TSNode.children != []:
             for child in TSNode.children:
-                string_TSNode_children.append(self.TSNode_to_StringTSNode(child, code_str))
-            parent_node.children = string_TSNode_children
-            return parent_node
+                node_sequence += self.TSTree_to_sequence(child, code_str)
+        node_sequence.append("<REDUCE>")
+        return node_sequence
+        
+    def sequence_to_partial_tree(self, sequence):
+        first_node = sequence[0]
+        partial_tree = PartialTree(first_node, self.node_builder)
+        try:
+            for expansion in sequence[1:]:
+                partial_tree.add_action(expansion)
+        except Exception as e:
+            print("ERROR!")
+            traceback.print_exc()
+            print("-------")
+        return partial_tree 
     
     
 class Node_Processor():
@@ -299,7 +348,7 @@ class Node_Processor():
             
     def to_sequence(self, node, tokenize_fn):
         node_sequence = [node.type]
-        if node.children == []:
+        if node.is_textual: #node.children == []:
             node_sequence.append(tokenize_fn(node.text))
         else:
             for child in node.children:
@@ -339,13 +388,12 @@ class Node_Processor():
         OG.add_node(ident_node)
         OG.add_edge(parent, ident_node)
 
-        if node.children == []:
+        if node.is_textual:
             node_text = node.text
-            if node_text != node.type:
-                self.counter += 1
-                node_label = f"{self.counter}_{node_text}"
-                OG.add_node(node_label)
-                OG.add_edge(ident_node, node_label)
+            self.counter += 1
+            node_label = f"{self.counter}_{node_text}"
+            OG.add_node(node_label)
+            OG.add_edge(ident_node, node_label)
         else:
             for child in node.children:
                 self.plot_graph_fill(OG, ident_node, child)
