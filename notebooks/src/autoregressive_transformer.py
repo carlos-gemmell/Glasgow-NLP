@@ -25,7 +25,6 @@ class AutoregressiveTransformer(nn.Module):
         self.model = CopyGeneratorTransformer(vocab_size=self.output_vocab_size, embed_dim=embed_dim, \
                                               att_heads=att_heads, layers=layers, \
                                               dim_feedforward=dim_feedforward, use_copy=True, \
-                                              max_seq_length=max_seq_length, \
                                               pretrained_encoder=pretrained_encoder, masked_look_ahead_att=True, \
                                               pretrained_decoder=pretrained_decoder)
         

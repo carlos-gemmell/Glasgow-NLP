@@ -1,5 +1,7 @@
 import collections
 from transformers import BertTokenizer
+from tokenizers import ByteLevelBPETokenizer
+
 
 class Shared_Vocab():
     def __init__(self, data, vocab_size, tokenizer_fn, use_OOVs=False):
@@ -123,3 +125,24 @@ class BERT_Vocab():
         return " ".join(self.tokenizer.convert_ids_to_tokens(ids))
     def decode_output(self, ids, OOVs=[]):
         return " ".join(self.tokenizer.convert_ids_to_tokens(ids))
+    
+
+class BPE_Code_vocab():
+    def __init__(self):
+        self.tokenizer = ByteLevelBPETokenizer("/nfs/phd_by_carlos/notebooks/datasets/code_search_net/code_bpe_hugging_32k-vocab.json",
+                                               "/nfs/phd_by_carlos/notebooks/datasets/code_search_net/code_bpe_hugging_32k-merges.txt",)
+        self.tokenizer.add_special_tokens(["[CLS]", "[EOS]", "[PAD]"])
+        self.EOS = self.tokenizer.encode("[EOS]").ids[0]
+        self.PAD = self.tokenizer.encode("[PAD]").ids[0]
+        self.CLS = self.tokenizer.encode("[CLS]").ids[0]
+        
+        self.vocab_size = self.tokenizer.get_vocab_size()
+        
+    def encode_output(self, string, OOV_ids=[]):
+        return self.tokenizer.encode(string).ids
+    def encode_input(self, string):
+        return self.tokenizer.encode(string).ids, []
+    def decode_input(self, ids, OOVs=[]):
+        return self.tokenizer.decode(ids)
+    def decode_output(self, ids, OOVs=[]):
+        return self.tokenizer.decode(ids)

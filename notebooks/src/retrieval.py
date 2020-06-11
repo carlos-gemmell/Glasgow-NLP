@@ -5,6 +5,7 @@ from java.io import File
 from java.nio.file import Paths
 from lucene import JavaError
 import numpy as np
+import re
 
 from org.apache.lucene.analysis.standard import StandardAnalyzer
 from org.apache.lucene.analysis.core import WhitespaceAnalyzer
@@ -24,7 +25,7 @@ from src.useful_utils import string_split_v3
 
 
 class PyLuceneRetriever():
-    def __init__(self):
+    def __init__(self, index_path=None):
         '''
         This initiates a PyLucene writer class in RAM.
         '''
@@ -32,7 +33,11 @@ class PyLuceneRetriever():
             lucene.initVM(vmargs=['-Djava.awt.headless=true'])
         except:
             print("JVM Running")
-        self.store = store.RAMDirectory()
+        
+        if index_path:
+            self.store = store.SimpleFSDirectory(Paths.get(index_path))
+        else:
+            self.store = store.RAMDirectory()
         
         self.t2 = FieldType()
         self.t2.setStored(False)
@@ -73,7 +78,10 @@ class PyLuceneRetriever():
         
         queryparser.classic.QueryParser( "fieldname", self.analyzer)
         parser = queryparser.classic.QueryParser("field", self.analyzer)
-        query = QueryParser.escape(query)
+        
+        removelist = "^ "
+        query = re.sub(r'[^\w'+removelist+']', '',query)
+#         query = QueryParser.escape(query)
         query = parser.parse(query)
         hits = searcher.search(query, max_retrieved_docs).scoreDocs
         doc_ids = [(x.doc, x.score) for x in hits]

@@ -89,7 +89,7 @@ class Model_Trainer():
 #             print("Keyboard Interrupt!")
 #             return self.model.stats
         
-    def evaluate(self, test_iterator):
+    def evaluate(self, test_iterator, save_file="eval_samples.txt"):
         self.model.eval()
         with torch.no_grad():
             eval_scores = []
@@ -98,6 +98,68 @@ class Model_Trainer():
                 batch_eval_outputs = self.model.eval_step(batch, self.vocab)
                 eval_scores += batch_eval_outputs
         if self.output_dir:
-            self.model.save_eval_results(eval_scores, os.path.join(self.output_dir, "eval_samples.txt"))
+            self.model.save_eval_results(eval_scores, os.path.join(self.output_dir, save_file))
         return eval_scores
     
+class Generic_Model_Trainer():
+    def __init__(self, output_dir=None):
+        self.mid_train_results = {}
+        if output_dir:
+            self.experiment_name = output_dir
+            self.output_dir = os.path.join(os.getcwd(), output_dir)
+            if not os.path.exists(self.output_dir):
+                os.makedirs(self.output_dir)
+            log_dir = os.path.join(output_dir, "logs.txt")
+            self.writer = super_print(log_dir)(print)
+            self.writer(f"Writing logs to: {log_dir}")
+        else:
+            self.output_dir = None
+            self.writer = print
+            self.writer("'output_dir' not defined, training and model outputs won't be saved.")
+            
+    def train(self, model, iterator, steps, evaluation_fn=None, log_interval=100, eval_interval=1000, save_interval=2000, learning_interval=4000):
+        
+        model.train() # Turn on the train mode
+        total_loss = 0.
+        start_time = time.time()
+        step = 1
+        self.mid_train_results["train_loss"] = []
+        self.mid_train_results["eval_results"] = []
+        try:
+            pbar = tqdm.tqdm(iterator, total=steps)
+            for batch in pbar:
+                loss = model.train_step(batch)
+                total_loss += loss.item()
+
+                if step % log_interval == 0:
+                    cur_loss = total_loss / log_interval
+                    pbar.set_description(f"Loss:{cur_loss:5.2f}, Perplx:{math.exp(cur_loss):5.2f}")
+                    sumary = {"step":step, "loss":round(cur_loss, 2)}
+                    self.mid_train_results["train_loss"].append(sumary)
+                    total_loss = 0
+
+
+                if step % eval_interval == 0 and evaluation_fn:
+                    self.writer("Evaluating model")
+                    model.eval()
+                    scores = evaluation_fn(model.raw_predict)
+                    model.train()
+                    self.mid_train_results["eval_results"].append(scores)
+                    elapsed = time.time() - start_time
+                    estimated_time_left = elapsed * ((steps - step)/step)
+                    self.writer(f"Step {step}/{steps}, estimated finish: {str(datetime.timedelta(seconds=estimated_time_left))}")
+
+                if step % save_interval == 0:
+                    self.model.save(os.path.join(self.output_dir, f"model_file_step_{step}.torch"))
+
+                if step % learning_interval == 0:
+                    self.model.scheduler.step()
+
+                step += 1
+                if step >= steps:
+                    self.writer("Finished training")
+                    
+        except KeyboardInterrupt:
+            print("Keyboard Interrupt!")
+        
+        return self.model.stats
