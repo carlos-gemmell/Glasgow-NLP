@@ -38,7 +38,7 @@ python_newline_statements = ['assert_statement',
 
 python_spaced_nodes = ["def", "if", "while", "for", "in", "not", "as", "return",
                       "continue", "break", "from", "import", "raise", "global",
-                      "class", "else"]
+                      "class", "else", "identifier"]
 
 def sub_str_from_coords(string, start, end):
     lines = string.split("\n")
@@ -232,6 +232,7 @@ class PartialTree():
         self.node_builder = node_builder
         self.root = node_builder.create(None, root_node_type)
         self.pointer = self.root
+        self.is_complete = False
         
     def add_action(self,expansion_token):
         is_valid = self.pointer.is_valid_pattern_expansion(expansion_token)
@@ -240,6 +241,7 @@ class PartialTree():
         
         if expansion_token == "<REDUCE>" and self.pointer.parent == None:
             print("Tree generation terminated")
+            self.is_complete = True
             return None
     
         if expansion_token == "<REDUCE>":
@@ -323,6 +325,18 @@ class Code_Parser():
                 node_sequence += self.TSTree_to_sequence(child, code_str)
         node_sequence.append("<REDUCE>")
         return node_sequence
+    
+    def is_valid_sequence(self, sequence):
+        first_node = sequence[0]
+        if first_node != "module":
+            return False
+        partial_tree = PartialTree(first_node, self.node_builder)
+        try:
+            for expansion in sequence[1:]:
+                partial_tree.add_action(expansion)
+        except Exception as e:
+            return False
+        return True 
         
     def sequence_to_partial_tree(self, sequence):
         first_node = sequence[0]
@@ -358,10 +372,10 @@ class Node_Processor():
         
     def to_string(self, node, indent=""):
         if node.children == []:
-            if node.text == "":
-                return node.type
-            else:
+            if node.is_textual:
                 return node.text
+            else:
+                return node.type
         else:
             child_text = ""
             if node.type == "block":

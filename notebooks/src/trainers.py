@@ -102,9 +102,8 @@ class Model_Trainer():
         return eval_scores
     
 class Generic_Model_Trainer():
-    self.mid_train_results = {}
     def __init__(self, output_dir=None):
-
+        self.mid_train_results = {}
         if output_dir:
             self.experiment_name = output_dir
             self.output_dir = os.path.join(os.getcwd(), output_dir)
@@ -120,7 +119,7 @@ class Generic_Model_Trainer():
             
     def train(self, model, iterator, steps, evaluation_fn=None, log_interval=100, eval_interval=1000, save_interval=2000, learning_interval=4000):
         
-        self.model.train() # Turn on the train mode
+        model.train() # Turn on the train mode
         total_loss = 0.
         start_time = time.time()
         step = 1
@@ -129,7 +128,7 @@ class Generic_Model_Trainer():
         try:
             pbar = tqdm.tqdm(iterator, total=steps)
             for batch in pbar:
-                loss = self.model.train_step(batch)
+                loss = model.train_step(batch)
                 total_loss += loss.item()
 
                 if step % log_interval == 0:

@@ -31,18 +31,23 @@ class SelfAttentionEmbedder(nn.Module):
         
         self.loss_type = loss_type
         
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.params = self.parameters()
         self.stats = {}
         self.init_weights()
     
     def init_train_params(self, lr=0.005, gamma=0.99):
-        self.optimizer = torch.optim.SGD(self.params, lr=lr)
+        self.optimizer = torch.optim.SGD(self.parameters(), lr=lr)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, 1.0, gamma=gamma)
         self.cross_entropy = nn.CrossEntropyLoss(reduction='none')
 
     def init_weights(self):
         initrange = 0.1
+        
+    @property
+    def device(self):
+        """
+        To get a ref to an object run: dict(model.named_parameters()).keys()[0]
+        """
+        return self.query_encoder_model.embedder.word_embeddings.weight.device
     
     def doc_embedding(self, doc):
         doc_emb = self.doc_embedder(doc) * math.sqrt(self.embedding_size)
@@ -68,6 +73,12 @@ class SelfAttentionEmbedder(nn.Module):
         
         return query_pooled, doc_pooled
     
+    def similarity(self, queries, docs):
+        """
+        queries: 2D array of ids dim: Seq_len x Batch
+        
+        """
+    
     def cosine_matrix(self, query_representations, code_representations):
         query_norm = torch.norm(query_representations, dim=-1, keepdim=True) + 1e-10
         code_norm = torch.norm(code_representations, dim=-1, keepdim=True) + 1e-10
@@ -85,7 +96,7 @@ class SelfAttentionEmbedder(nn.Module):
         
         if self.loss_type == "cosine":
             cosine_similarities = self.cosine_matrix(query_representations, code_representations)
-            neg_matrix = torch.diag(torch.full((cosine_similarities.shape[0],), float('-inf'))).to("cuda")
+            neg_matrix = torch.diag(torch.full((cosine_similarities.shape[0],), float('-inf'))).to(self.device)
 
             good_sample_loss = torch.diagonal(cosine_similarities)
             bad_sample_loss = torch.max(cosine_similarities + neg_matrix, dim=-1)[0]
@@ -93,7 +104,7 @@ class SelfAttentionEmbedder(nn.Module):
         
         elif self.loss_type == "softmax":
             logits = self.softmax_matrix(query_representations, code_representations)
-            labels = torch.arange(0,code_representations.shape[0]).to("cuda")
+            labels = torch.arange(0,code_representations.shape[0]).to(self.device)
             per_sample_loss = self.cross_entropy(logits, labels)
         return torch.mean(per_sample_loss)
     
@@ -106,7 +117,7 @@ class SelfAttentionEmbedder(nn.Module):
         loss = self.loss(query_vector, doc_vector)
         loss.backward()
         
-        torch.nn.utils.clip_grad_norm_(self.params, 0.5)
+#         torch.nn.utils.clip_grad_norm_(self.parameters(), 0.5)
         self.optimizer.step()
         return loss
     
