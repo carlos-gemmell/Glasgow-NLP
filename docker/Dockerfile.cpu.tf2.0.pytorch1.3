@@ -24,7 +24,9 @@ RUN pip3 install --force-reinstall --upgrade pip
 RUN pip install tensorflow==2.0.0-rc1 tensorflow_datasets
 RUN pip install torch torchvision
 RUN pip install jupyter jupyterlab tokenizer
-RUN pip install torchtext pytorch-nlp nltk line_profiler runipy dotmap
+RUN pip install torchtext pytorch-nlp nltk line_profiler runipy dotmap transformers matplotlib
+RUN pip install transformers tokenizers==0.4
+RUN pip install jsonlines tree-sitter anytree pyformlang autopep8
 
 RUN apt-get install -y curl nodejs npm
 RUN jupyter labextension install jupyterlab-drawio
@@ -34,16 +36,17 @@ RUN git config --global user.email "aquaktus@yahoo.co.uk"
 RUN git config --global user.name "aquaktus"
 
 # Pylucene setup
+RUN apt-get update -y
 RUN apt-get install -y default-jdk ant
 
 WORKDIR /usr/lib/jvm/default-java/jre/lib
 RUN ln -s ../../lib amd64
 
 WORKDIR /usr/src/pylucene
-RUN curl https://dist.apache.org/repos/dist/dev/lucene/pylucene/8.3.0-rc1/pylucene-8.3.0-src.tar.gz \
-    | tar -xz --strip-components=1
+RUN curl http://apache.mirror.anlx.net/lucene/pylucene/pylucene-8.3.0-src.tar.gz \
+     | tar -xz --strip-components=1
 RUN cd jcc \
-    && NO_SHARED=1 JCC_JDK=/usr/lib/jvm/default-java python3 setup.py install
+   && NO_SHARED=1 JCC_JDK=/usr/lib/jvm/default-java python3 setup.py install
 RUN make all install JCC='python3 -m jcc' ANT=ant PYTHON=python NUM_FILES=8
 
 WORKDIR ..
