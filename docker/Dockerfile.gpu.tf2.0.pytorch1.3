@@ -28,9 +28,9 @@ RUN pip install torchtext pytorch-nlp nltk line_profiler runipy dotmap transform
 RUN pip install transformers tokenizers==0.4
 RUN pip install jsonlines tree-sitter anytree pyformlang autopep8
 
-RUN apt-get install -y curl nodejs npm
-RUN jupyter labextension install jupyterlab-drawio
-RUN jupyter labextension install @jupyter-widgets/jupyterlab-manager
+# RUN apt-get install -y curl nodejs npm
+# RUN jupyter labextension install jupyterlab-drawio
+# RUN jupyter labextension install @jupyter-widgets/jupyterlab-manager
 
 RUN git config --global user.email "aquaktus@yahoo.co.uk"
 RUN git config --global user.name "aquaktus"
@@ -43,6 +43,7 @@ WORKDIR /usr/lib/jvm/default-java/jre/lib
 RUN ln -s ../../lib amd64
 
 WORKDIR /usr/src/pylucene
+RUN apt-get install curl -y
 RUN curl http://apache.mirror.anlx.net/lucene/pylucene/pylucene-8.3.0-src.tar.gz \
      | tar -xz --strip-components=1
 RUN cd jcc \
