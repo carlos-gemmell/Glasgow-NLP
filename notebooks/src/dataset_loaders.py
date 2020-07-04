@@ -167,7 +167,7 @@ class CoNaLa_RawDataLoader(RawDataLoader):
         return pairs
     
 class Django_RawDataLoader(RawDataLoader):
-    def __init__(self, data_directory="/nfs/phd_by_carlos/notebooks/datasets/django_folds/", fold=1):
+    def __init__(self, data_directory="/nfs/phd_by_carlos/notebooks/datasets/django/", **kwargs):
         self.data_directory = data_directory
         
         def get_lines(path):
@@ -176,12 +176,12 @@ class Django_RawDataLoader(RawDataLoader):
                 for line in f.readlines():
                     lines.append(line.strip())
             return lines
-        train_src = get_lines(os.path.join(data_directory, f"django.fold{fold}-10.train.src"))
-        train_tgt = get_lines(os.path.join(data_directory, f"django.fold{fold}-10.train.tgt"))
-        valid_src = get_lines(os.path.join(data_directory, f"django.fold{fold}-10.valid.src"))
-        valid_tgt = get_lines(os.path.join(data_directory, f"django.fold{fold}-10.valid.tgt"))
-        test_src = get_lines(os.path.join(data_directory, f"django.fold{fold}-10.test.src"))
-        test_tgt = get_lines(os.path.join(data_directory, f"django.fold{fold}-10.test.tgt"))
+        train_src = get_lines(os.path.join(data_directory, f"train.anno"))
+        train_tgt = get_lines(os.path.join(data_directory, f"train.code"))
+        valid_src = get_lines(os.path.join(data_directory, f"dev.anno"))
+        valid_tgt = get_lines(os.path.join(data_directory, f"dev.code"))
+        test_src = get_lines(os.path.join(data_directory, f"test.anno"))
+        test_tgt = get_lines(os.path.join(data_directory, f"test.code"))
         
         self.train_pairs = list(zip(train_src, train_tgt))
         self.valid_pairs = list(zip(valid_src, valid_tgt))
@@ -209,19 +209,19 @@ class Django_RawDataLoader(RawDataLoader):
     
     
 class Parseable_Django_RawDataLoader(Django_RawDataLoader):
-    def __init__(self):
+    def __init__(self, **kwargs):
         from src.DataProcessors import Parse_Tree_Translation_DataProcessor
-        super().__init__()
+        super().__init__(**kwargs)
         
-        parse_tree_processor = Parse_Tree_Translation_DataProcessor(self.train_pairs)
+        parse_tree_processor = Parse_Tree_Translation_DataProcessor(self.train_pairs, **kwargs)
         print("Flitered train ratio:",len(self.train_pairs), len(parse_tree_processor.task_data))
         self.train_pairs = parse_tree_processor.task_data
         
-        parse_tree_processor = Parse_Tree_Translation_DataProcessor(self.valid_pairs)
+        parse_tree_processor = Parse_Tree_Translation_DataProcessor(self.valid_pairs, **kwargs)
         print("Flitered valid ratio:",len(self.valid_pairs), len(parse_tree_processor.task_data))
         self.valid_pairs = parse_tree_processor.task_data
         
-        parse_tree_processor = Parse_Tree_Translation_DataProcessor(self.test_pairs)
+        parse_tree_processor = Parse_Tree_Translation_DataProcessor(self.test_pairs, **kwargs)
         print("Flitered test ratio:",len(self.test_pairs), len(parse_tree_processor.task_data))
         self.test_pairs = parse_tree_processor.task_data
         

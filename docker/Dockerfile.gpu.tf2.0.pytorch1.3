@@ -8,7 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     wget vim \
     software-properties-common \
-    locales
+    locales \
+    graphviz \
+    unzip 
     
 RUN locale-gen en_US.UTF-8
 ENV LANG en_US.UTF-8
@@ -27,6 +29,10 @@ RUN pip install jupyter jupyterlab tokenizer
 RUN pip install torchtext pytorch-nlp nltk line_profiler runipy dotmap transformers matplotlib
 RUN pip install transformers tokenizers==0.4
 RUN pip install jsonlines tree-sitter anytree pyformlang autopep8
+
+# for tranX
+RUN pip install records xgboost babel
+RUN pip install astor=='0.7.1' --upgrade
 
 # RUN apt-get install -y curl nodejs npm
 # RUN jupyter labextension install jupyterlab-drawio

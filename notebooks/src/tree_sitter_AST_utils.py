@@ -227,12 +227,13 @@ class PartialNode():
             return new_child
         
 class PartialTree():
-    def __init__(self, root_node_type, node_builder):
+    def __init__(self, root_node_type, node_builder, **kwargs):
         self.full_seq = [root_node_type]
         self.node_builder = node_builder
         self.root = node_builder.create(None, root_node_type)
         self.pointer = self.root
         self.is_complete = False
+        self.node_processor = Node_Processor(**kwargs)
         
     def add_action(self,expansion_token):
         is_valid = self.pointer.is_valid_pattern_expansion(expansion_token)
@@ -256,6 +257,12 @@ class PartialTree():
     @property
     def pointer_explicit_expansions(self):
         self.pointer.explicit_expansions
+        
+    def plot(self):
+        self.node_processor.plot(self.root)
+    
+    def to_string(self):
+        return self.node_processor.to_string(self.root)
     
         
 
@@ -290,12 +297,10 @@ class NodeBuilder():
 
 
 class Code_Parser():
-    def __init__(self, grammar, language="python"):
-        Language.build_library('build/my-languages.so',[
-                'src/tree-sitter/tree-sitter-javascript',
-                'src/tree-sitter/tree-sitter-python'])
+    def __init__(self, grammar, language="python", parser_library_path='src/tree-sitter/tree-sitter-python', **kwargs):
+        Language.build_library('/build/my-languages.so',[parser_library_path])
         
-        LANGUAGE = Language('build/my-languages.so', language)
+        LANGUAGE = Language('/build/my-languages.so', language)
         
         self.grammar = grammar
         
@@ -352,7 +357,7 @@ class Code_Parser():
     
     
 class Node_Processor():
-    def __init__(self, language="python"):
+    def __init__(self, language="python", **kwargs):
         self.counter = 0
         if language == "python":
             global python_statements

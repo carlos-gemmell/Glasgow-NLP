@@ -170,18 +170,19 @@ class CodeTrainedBPE_Translation_DataProcessor(DataProcessor, Dataset):
         torch.save(self, path)
     
 class Parse_Tree_Translation_DataProcessor(Dataset):
-    def __init__(self, task_data, max_length=500):
+    def __init__(self, task_data, max_length=500, tokenizer_dir="/nfs/phd_by_carlos/notebooks/datasets/code_search_net/", 
+                 grammar_path="src/tree-sitter/tree-sitter-python/src/grammar.json",
+                 **kwargs):
         self.task_data = task_data
         self.max_length = max_length
-        self.tokenizer = ByteLevelBPETokenizer("/nfs/phd_by_carlos/notebooks/datasets/code_search_net/code_bpe_hugging_32k-vocab.json",
-                                          "/nfs/phd_by_carlos/notebooks/datasets/code_search_net/code_bpe_hugging_32k-merges.txt")
+        self.tokenizer = ByteLevelBPETokenizer(tokenizer_dir+"code_bpe_hugging_32k-vocab.json",
+                                          tokenizer_dir+"code_bpe_hugging_32k-merges.txt")
         self.tokenizer.add_special_tokens(["[CLS]", "[SOS]", "[EOS]", "[PAD]"])
         self.SOS = self.tokenizer.encode("[SOS]").ids[0]
         self.EOS = self.tokenizer.encode("[EOS]").ids[0]
         self.PAD = self.tokenizer.encode("[PAD]").ids[0]
         self.CLS = self.tokenizer.encode("[CLS]").ids[0]
         
-        grammar_path = "src/tree-sitter/tree-sitter-python/src/grammar.json"
         with open(grammar_path, "r") as grammar_file:
             self.python_grammar = json.load(grammar_file)
 
@@ -204,7 +205,7 @@ class Parse_Tree_Translation_DataProcessor(Dataset):
         for node_type, member in extra_externals.items():
             self.python_grammar["rules"][node_type] = member
 
-        self.python_parser = Code_Parser(self.python_grammar, "python")
+        self.python_parser = Code_Parser(self.python_grammar, "python", **kwargs)
         self.node_processor = Node_Processor()
         self.tree_vocab, grammar_patterns = get_grammar_vocab(self.python_grammar)
         
