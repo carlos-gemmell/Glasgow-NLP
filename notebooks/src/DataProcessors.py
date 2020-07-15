@@ -3,7 +3,9 @@ from abc import ABC, abstractmethod
 import torch
 import json
 import numpy as np
+import random
 from tokenizers import ByteLevelBPETokenizer
+from transformers import LongformerConfig, LongformerModel, LongformerTokenizer
 from torch.utils.data import Dataset, DataLoader
 from src.tree_sitter_AST_utils import Tree_Sitter_ENFA, sub_str_from_coords, Node_Processor, \
                                         Code_Parser, StringTSNode, get_grammar_vocab, regex_to_member, \
@@ -17,7 +19,7 @@ if is_interactive():
 
 class DataProcessor(ABC):
     @abstractmethod
-    def __init__(self, task_data):
+    def __init__(self, task_data, **kwargs):
         """
         Things like max sequence length should be passed here and enforced elsewhere.
         If the dataset is too large to fit, this is where the transformations will happen
@@ -308,3 +310,71 @@ class Parse_Tree_Translation_DataProcessor(Dataset):
         torch.save(self, path)
         
         
+class Reranking_DataProcessor(Dataset):
+    def __init__(self, d_col, q_col, q_rels, tokenizer, max_length=4096, **kwargs):
+        '''
+        d_col: dict: {doc_id : doc_text}
+        q_col: dict: {query_id : query_text}
+        q_rels: dict: {query_id : [d_id,...]}
+        '''
+        self.d_col = d_col
+        self.q_col = q_col
+        self.q_rels = q_rels
+        self.tokenizer = tokenizer
+        self.q_ids = list(q_rels.keys())
+        self.d_ids = list(d_col.keys())
+        self.PAD = tokenizer.pad_token_id
+        super().__init__(**kwargs)
+    
+    def __len__(self):
+        return len(self.q_ids)
+    
+    def __getitem__(self, idx):
+        if idx >= len(self):
+            raise IndexError
+            
+        q_id = self.q_ids[idx]
+        
+        #sample uniformly over positive and negative samples
+        true_label = int(random.random() > 0.5)
+        d_id = self.sample_positive(q_id) if true_label else self.sample_negative(q_id)
+        sample = {'input': self.encode_input(self.d_col[d_id], self.q_col[q_id]), 'label': [true_label]}
+        return sample
+    
+    def sample_negative(self, q_id):
+        while True:
+            d_id =  random.choice(self.d_ids)
+            if d_id not in self.q_rels[q_id]:
+                return d_id
+    
+    def sample_positive(self, q_id):
+        return random.choice(self.q_rels[q_id])
+    
+    def encode_input(self, doc, query):
+        concatted = query + " [SEP] " + doc
+        return self.tokenizer.encode(concatted)
+    
+    def decode_tensor(self, batched_tensor):
+        return [self.tokenizer.decode(list(ids.cpu())) for ids in batched_tensor.T]
+            
+    
+    def collate(self, input_samples):
+        """
+        input_samples: [dict]: these are samples obtained through the _get_item method
+        """
+        collated_samples = {}
+        collated_samples["input"] = torch.nn.utils.rnn.pad_sequence([torch.Tensor(sample["input"]).type(torch.LongTensor) for sample in input_samples], 
+                                                 padding_value=self.PAD)
+        print(input_samples)
+        collated_samples["label"] = torch.cat([torch.Tensor(sample["label"]).type(torch.LongTensor) for sample in input_samples])
+        return collated_samples
+    
+    def to_dataloader(self, batch_size, num_workers=4, shuffle=True):
+        return DataLoader(self, batch_size=batch_size, num_workers=num_workers,\
+                           drop_last=False, collate_fn = self.collate, shuffle=shuffle)
+    
+    
+class Longformer_Reranking_DataProcessor(Reranking_DataProcessor):
+    def __init__(self, d_col, q_col, q_rels, max_length=4096, **kwargs):
+        tokenizer = LongformerTokenizer.from_pretrained("allenai/longformer-base-4096")
+        super().__init__(d_col, q_col, q_rels, tokenizer, **kwargs)
