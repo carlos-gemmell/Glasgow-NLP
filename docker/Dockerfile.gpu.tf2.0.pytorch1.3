@@ -27,16 +27,20 @@ RUN pip install tensorflow-gpu==2.0.0-rc1 tensorflow_datasets
 RUN pip install torch torchvision
 RUN pip install jupyter jupyterlab tokenizer
 RUN pip install torchtext pytorch-nlp nltk line_profiler runipy dotmap transformers matplotlib
-RUN pip install transformers tokenizers==0.4
+RUN pip install transformers==3.0.1 pytorch_lightning
+RUN pip install torch==1.3.1 --upgrade
 RUN pip install jsonlines tree-sitter anytree pyformlang autopep8
+RUN pip install pyserini
 
 # for tranX
 RUN pip install records xgboost babel
 RUN pip install astor=='0.7.1' --upgrade
 
-# RUN apt-get install -y curl nodejs npm
+RUN apt-get install -y curl sudo dirmngr apt-transport-https lsb-release ca-certificates
+RUN curl -sL https://deb.nodesource.com/setup_12.x | sudo -E bash -
+RUN apt -y install nodejs
 # RUN jupyter labextension install jupyterlab-drawio
-# RUN jupyter labextension install @jupyter-widgets/jupyterlab-manager
+RUN jupyter labextension install @jupyter-widgets/jupyterlab-manager
 
 RUN git config --global user.email "aquaktus@yahoo.co.uk"
 RUN git config --global user.name "aquaktus"

@@ -8,7 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     wget vim \
     software-properties-common \
-    locales
+    locales \
+    graphviz \
+    unzip
     
 RUN locale-gen en_US.UTF-8
 ENV LANG en_US.UTF-8
@@ -25,11 +27,19 @@ RUN pip install tensorflow==2.0.0-rc1 tensorflow_datasets
 RUN pip install torch torchvision
 RUN pip install jupyter jupyterlab tokenizer
 RUN pip install torchtext pytorch-nlp nltk line_profiler runipy dotmap transformers matplotlib
-RUN pip install transformers tokenizers==0.4
+RUN pip install transformers==3.0.1 pytorch_lightning
+RUN pip install torch==1.3.1 --upgrade
 RUN pip install jsonlines tree-sitter anytree pyformlang autopep8
+RUN pip install pyserini
 
-RUN apt-get install -y curl nodejs npm
-RUN jupyter labextension install jupyterlab-drawio
+# for tranX
+RUN pip install records xgboost babel
+RUN pip install astor=='0.7.1' --upgrade
+
+RUN apt-get install -y curl sudo dirmngr apt-transport-https lsb-release ca-certificates
+RUN curl -sL https://deb.nodesource.com/setup_12.x | sudo -E bash -
+RUN apt -y install nodejs
+# RUN jupyter labextension install jupyterlab-drawio
 RUN jupyter labextension install @jupyter-widgets/jupyterlab-manager
 
 RUN git config --global user.email "aquaktus@yahoo.co.uk"
@@ -43,6 +53,7 @@ WORKDIR /usr/lib/jvm/default-java/jre/lib
 RUN ln -s ../../lib amd64
 
 WORKDIR /usr/src/pylucene
+RUN apt-get install curl -y
 RUN curl http://apache.mirror.anlx.net/lucene/pylucene/pylucene-8.3.0-src.tar.gz \
      | tar -xz --strip-components=1
 RUN cd jcc \
