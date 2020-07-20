@@ -227,10 +227,10 @@ class Parseable_Django_RawDataLoader(Django_RawDataLoader):
         
 
 class MS_Marco_RawDataLoader(RawDataLoader):
-    def __init__(self, data_directory="/nfs/phd_by_carlos/notebooks/datasets/MS_Marco/"):
+    def __init__(self, MARCO_data_directory="/nfs/phd_by_carlos/notebooks/datasets/MS_MARCO/", **kwargs):
         self.data_directory = data_directory
         self.collection = {}
-        with open(os.path.join(data_directory, "collection.tsv")) as tsvfile:
+        with open(os.path.join(MARCO_data_directory, "collection.tsv")) as tsvfile:
             reader = csv.reader(tsvfile, delimiter='\t')
             for i, row in tqdm.tqdm(enumerate(reader)):
                 passage_id, passage_text = row
@@ -243,7 +243,7 @@ class MS_Marco_RawDataLoader(RawDataLoader):
                 
     def load_queries(self, split):
         query_dict = {}
-        with open(os.path.join(self.data_directory, f"queries.{split}.tsv")) as tsvfile:
+        with open(os.path.join(self.MARCO_data_directory, f"queries.{split}.tsv")) as tsvfile:
             reader = csv.reader(tsvfile, delimiter='\t')
             for i, row in tqdm.tqdm(enumerate(reader)):
                 q_id, q_text = row
@@ -252,7 +252,7 @@ class MS_Marco_RawDataLoader(RawDataLoader):
     
     def q_rels(self, split):
         q_rels_dict = {}
-        with open(os.path.join(self.data_directory, f"qrels.{split}.tsv")) as tsvfile:
+        with open(os.path.join(self.MARCO_data_directory, f"qrels.{split}.tsv")) as tsvfile:
             reader = csv.reader(tsvfile, delimiter='\t')
             for i, row in tqdm.tqdm(enumerate(reader)):
                 q_id, _, passage_id, _ = row
@@ -262,3 +262,16 @@ class MS_Marco_RawDataLoader(RawDataLoader):
                     q_rels_dict[int(q_id)] = [int(passage_id)]
         return q_rels_dict
     
+
+class CAsT_Year2_RawDataLoader(RawDataLoader):
+    def __init__(self, CAsT_data_dir="/nfs/phd_by_carlos/notebooks/datasets/TREC_CAsT/", **kwargs):
+        MARCO_raw_data_loader = MS_Marco_RawDataLoader(**kwargs)
+        
+#         def get_JSON_turns(file):
+#             with open(file) as CAsT_turns_file:
+#                 data = json.load(CAsT_turns_file)
+        
+#         with open(os.path.join(self.CAsT_data_dir, f"treccastweb/2019/data/training/")) as nist_qrels_f:
+        
+#         with open(os.path.join(self.CAsT_data_dir, f"2019qrels.txt")) as nist_qrels_f:
+#             nist_qrels =  
