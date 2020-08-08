@@ -4,18 +4,15 @@ import torch
 import json
 import numpy as np
 import random
+import copy
 from tokenizers import ByteLevelBPETokenizer
-from transformers import LongformerConfig, LongformerModel, LongformerTokenizer
+from transformers import LongformerConfig, LongformerModel, LongformerTokenizer, BertTokenizer, BertModel
 from torch.utils.data import Dataset, DataLoader
+from src.models.CAsT_models import Run_File_Reranker, BM25_Ranker
 from src.tree_sitter_AST_utils import Tree_Sitter_ENFA, sub_str_from_coords, Node_Processor, \
                                         Code_Parser, StringTSNode, get_grammar_vocab, regex_to_member, \
                                         NodeBuilder, PartialNode, sub_str_from_coords, PartialTree
-import tqdm
-def is_interactive():
-    import __main__ as main
-    return not hasattr(main, '__file__')
-if is_interactive():
-    import tqdm.notebook as tqdm 
+from tqdm.autonotebook import tqdm
 
 class DataProcessor(ABC):
     @abstractmethod
@@ -310,52 +307,65 @@ class Parse_Tree_Translation_DataProcessor(Dataset):
         torch.save(self, path)
         
         
-class Reranking_DataProcessor(Dataset):
-    def __init__(self, d_col, q_col, q_rels, tokenizer, max_length=4096, **kwargs):
+class Contextual_Reranking_DataProcessor(Dataset):
+    def __init__(self, get_doc_fn, get_query_fn, topics, first_pass_model_fn, numericalizer, num_negative=100, max_length=512, **kwargs):
         '''
-        d_col: dict: {doc_id : doc_text}
-        q_col: dict: {query_id : query_text}
-        q_rels: dict: {query_id : [d_id,...]}
+        get_doc_fn: fn(d_id) -> "doc string"
+        get_query_fn: fn(q_id) -> "query string"
+        topics: list: [([context, q_id, [d_id,...])] a list containing (context object, current turn, list of relevant docs)
+        first_pass_model: fn(q_id) -> [(d_id, score)]
         '''
-        self.d_col = d_col
-        self.q_col = q_col
-        self.q_rels = q_rels
-        self.tokenizer = tokenizer
-        self.q_ids = list(q_rels.keys())
-        self.d_ids = list(d_col.keys())
-        self.PAD = tokenizer.pad_token_id
+        self.get_doc_fn = get_doc_fn
+        self.get_query_fn = get_query_fn
+        self.topics = topics
+        self.numericalizer = numericalizer
+        self.num_negative = num_negative
+        self.first_pass_model_fn = first_pass_model_fn
+        self.PAD = numericalizer.pad_token_id
+        self.max_length = max_length
         super().__init__(**kwargs)
     
     def __len__(self):
-        return len(self.q_ids)
+        return len(self.topics)
     
     def __getitem__(self, idx):
         if idx >= len(self):
             raise IndexError
             
-        q_id = self.q_ids[idx]
+        topic = self.topics[idx]
+        _,q_id,_ = topic
         
         #sample uniformly over positive and negative samples
         true_label = int(random.random() > 0.5)
-        d_id = self.sample_positive(q_id) if true_label else self.sample_negative(q_id)
-        sample = {'input': self.encode_input(self.d_col[d_id], self.q_col[q_id]), 'label': [true_label]}
+        d_id = self.sample_positive(topic) if true_label else self.sample_negative(topic)
+        context_string = self.get_context(topic)
+        d_string = self.get_doc_fn(d_id)
+        q_string = self.get_query_fn(q_id)
+        sample = {'input': self.encode_input(q_string, d_string, context_string), 'label': [true_label]}
         return sample
     
-    def sample_negative(self, q_id):
-        while True:
-            d_id =  random.choice(self.d_ids)
-            if d_id not in self.q_rels[q_id]:
+    def sample_negative(self, topic):
+        context, q_id, rels = topic
+        results = self.first_pass_model_fn(q_id, hits=self.num_negative)
+        for i in range(100):
+            d_id, score =  random.choice(results)
+            if d_id not in rels:
                 return d_id
+        print("Sampled too many times, no negative found.")
+        
+    def get_context(self, topic):
+        return ""
     
-    def sample_positive(self, q_id):
-        return random.choice(self.q_rels[q_id])
+    def sample_positive(self, topic):
+        context, q_id, rels = topic
+        return random.choice(rels)
     
-    def encode_input(self, doc, query):
-        concatted = query + " [SEP] " + doc
-        return self.tokenizer.encode(concatted)
+    def encode_input(self, q_string, d_string, context_string):
+        concatted = q_string + " [SEP] " + d_string + " [SEP] " + context_string
+        return self.numericalizer.encode(concatted, max_length=self.max_length, truncation=True)
     
     def decode_tensor(self, batched_tensor):
-        return [self.tokenizer.decode(list(ids.cpu())) for ids in batched_tensor.T]
+        return [self.numericalizer.decode(list(ids.cpu())) for ids in batched_tensor.T]
             
     
     def collate(self, input_samples):
@@ -363,18 +373,36 @@ class Reranking_DataProcessor(Dataset):
         input_samples: [dict]: these are samples obtained through the _get_item method
         """
         collated_samples = {}
-        collated_samples["input"] = torch.nn.utils.rnn.pad_sequence([torch.Tensor(sample["input"]).type(torch.LongTensor) for sample in input_samples], 
-                                                 padding_value=self.PAD)
-        print(input_samples)
-        collated_samples["label"] = torch.cat([torch.Tensor(sample["label"]).type(torch.LongTensor) for sample in input_samples])
+        collated_samples["input"] = torch.nn.utils.rnn.pad_sequence([torch.tensor(sample["input"], dtype=torch.long) for sample in input_samples], 
+                                                 padding_value=self.PAD).T
+        collated_samples["label"] = torch.cat([torch.Tensor(sample["label"]) for sample in input_samples])
         return collated_samples
     
     def to_dataloader(self, batch_size, num_workers=4, shuffle=True):
-        return DataLoader(self, batch_size=batch_size, num_workers=num_workers,\
+        dataloader = DataLoader(self, batch_size=batch_size, num_workers=num_workers,\
                            drop_last=False, collate_fn = self.collate, shuffle=shuffle)
+        dataloader.__code__ = 0
+        return dataloader
     
+class Resolved_Query_Reranking_DataProcessor(Contextual_Reranking_DataProcessor):
+    def __init__(self, get_doc_fn, get_query_fn, topics, first_pass_model_fn, numericalizer, **kwargs):
+        super().__init__(get_doc_fn, get_query_fn, topics, first_pass_model_fn, numericalizer, **kwargs)
+        
+    def __getitem__(self, idx):
+        if idx >= len(self):
+            raise IndexError
+            
+        topic = self.topics[idx]
+        _,q_id,_ = topic
+        
+        #sample uniformly over positive and negative samples
+        true_label = int(random.random() > 0.5)
+        d_id = self.sample_positive(topic) if true_label else self.sample_negative(topic)
+        d_string = self.get_doc_fn(d_id)
+        q_string = self.get_query_fn(q_id, utterance_type="manual_rewritten_utterance")
+        sample = {'input': self.encode_input(q_string, d_string), 'label': [true_label]}
+        return sample
     
-class Longformer_Reranking_DataProcessor(Reranking_DataProcessor):
-    def __init__(self, d_col, q_col, q_rels, max_length=4096, **kwargs):
-        tokenizer = LongformerTokenizer.from_pretrained("allenai/longformer-base-4096")
-        super().__init__(d_col, q_col, q_rels, tokenizer, **kwargs)
+    def encode_input(self, q_string, d_string):
+        concatted = q_string + " [SEP] " + d_string + " [SEP]"
+        return self.numericalizer.encode(concatted, max_length=self.max_length, truncation=True)

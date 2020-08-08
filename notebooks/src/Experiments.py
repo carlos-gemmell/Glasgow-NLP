@@ -5,12 +5,9 @@ import numpy as np
 import os
 import sys
 from .useful_utils import string_split_v3, string_split_v1, chunks
-import tqdm
-def is_interactive():
-    import __main__ as main
-    return not hasattr(main, '__file__')
-if is_interactive():
-    import tqdm.notebook as tqdm 
+import pytrec_eval
+import json
+from tqdm.auto import tqdm 
 
 class Experiment(ABC):
     def __init__(self, task_data):
@@ -103,3 +100,88 @@ class TranslationExperiment(Experiment):
             
         return {"BLEU":total_BLEU}
             
+        
+        
+class CAsT_experiment(Experiment):
+    def __init__(self, topics):
+        '''
+        topics: (context:[q_ids], q_id, q_rel:[d_ids])
+        '''
+        self.topics = topics
+        
+    def evaluate(self, prediction_fn, save_dir=None, save_name="translation_eval.txt", hits=100):
+        full_q_rels = {}
+        run = {}
+        for topic in self.topics:
+            pred_d_ids = prediction_fn(topic, hits=100)
+            context, q_id, q_rels = topic
+            full_q_rels[q_id] = {d_id:1 for d_id in q_rels}
+            run[q_id] = {d_id:score for (d_id, score) in pred_d_ids}
+        evaluator = pytrec_eval.RelevanceEvaluator(full_q_rels, {'map', 'ndcg'})
+        results = evaluator.evaluate(run)
+        aggregate = self.dict_mean(list(results.values()))
+        return aggregate, results
+    
+    def dict_mean(self, dict_list):
+        mean_dict = {}
+        for key in dict_list[0].keys():
+            mean_dict[key] = sum(d[key] for d in dict_list) / len(dict_list)
+        return mean_dict
+    
+    
+
+class Ranking_Experiment():
+    def __init__(self, q_rels, save_dir=None, save_name="rerank_eval.run"):
+        '''
+        q_rels: dict: {'q_id':[d_id, d_id,...],...}
+        '''
+        pytrec_q_rels = {}
+        for q_id, d_ids in q_rels.items():
+            pytrec_q_rels[q_id] = {d_id:1 for d_id in d_ids}
+        self.evaluator = pytrec_eval.RelevanceEvaluator(pytrec_q_rels, {'map', 'ndcg', 'set_recall', 'recip_rank'})
+        
+    def dict_mean(self, dict_list):
+        mean_dict = {}
+        for key in dict_list[0].keys():
+            mean_dict[key] = sum(d[key] for d in dict_list) / len(dict_list)
+        return mean_dict
+    
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'q_id':"xxx", 'search_results':[("MARCO_xxx", 0.63)...]},...]
+        '''
+        pytrec_run = {}
+        for sample_obj in samples:
+            q_id = sample_obj['q_id']
+            pytrec_run[q_id] = {}
+            for d_id, score in sample_obj['search_results']:
+                pytrec_run[q_id][d_id] = score
+        
+        results = self.evaluator.evaluate(pytrec_run)
+        aggregate = self.dict_mean(list(results.values()))
+        return aggregate
+    
+    
+class RUN_File_Transform_Exporter():
+    def __init__(self, run_file_path, model_name='model_by_carlos'):
+        '''
+        A Transform Exporter that creates a RUN file from samples returnedd by a search engine.
+        '''
+        self.run_file_path = run_file_path
+        self.model_name = model_name
+        
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'q_id':"xxx", 'search_results':[("MARCO_xxx", 0.63)...]},...]
+        '''
+        total_samples = 0
+        with open(self.run_file_path, 'w') as run_file:
+            for sample_obj in tqdm(samples, desc='Writing to RUN file', leave=False):
+                q_id = sample_obj['q_id']
+                search_results = sample_obj['search_results']
+                ordered_results = sorted(search_results, key=lambda res: res[1], reverse=True)
+                for idx, result in enumerate(ordered_results):
+                    d_id, score = result
+                    total_samples+=1
+                    run_file.write(f"{q_id} Q0 {d_id} {idx+1} {score} {self.model_name}\n")
+        print(f"Successfully written {total_samples} samples from {len(samples)} queries run to: {self.run_file_path}")

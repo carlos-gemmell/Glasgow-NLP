@@ -6,8 +6,11 @@ import torchtext
 from dotmap import DotMap
 import numpy as np
 import random
+import torch
 import json
 import sys
+import pickle
+from pyserini.search import SimpleSearcher
 from .metrics import RecipRank, doc_search_subtask
 import csv
 import tqdm
@@ -227,14 +230,20 @@ class Parseable_Django_RawDataLoader(Django_RawDataLoader):
         
 
 class MS_Marco_RawDataLoader(RawDataLoader):
-    def __init__(self, MARCO_data_directory="/nfs/phd_by_carlos/notebooks/datasets/MS_MARCO/", **kwargs):
+    def __init__(self, data_directory="/nfs/phd_by_carlos/notebooks/datasets/MS_MARCO/", from_pickle=False, **kwargs):
         self.data_directory = data_directory
-        self.collection = {}
-        with open(os.path.join(MARCO_data_directory, "collection.tsv")) as tsvfile:
-            reader = csv.reader(tsvfile, delimiter='\t')
-            for i, row in tqdm.tqdm(enumerate(reader)):
-                passage_id, passage_text = row
-                self.collection[int(passage_id)] = passage_text
+        
+        if from_pickle:
+            with open(os.path.join(data_directory, "collection.pickle"), "rb") as f:
+                # pickle.dump(raw_data_loader.collection, open("datasets/MS_MARCO/collection.pickle", "wb"), protocol=pickle.HIGHEST_PROTOCOL)
+                self.collection = pickle.load(f)
+        else:
+            self.collection = {}
+            with open(os.path.join(data_directory, "collection.tsv")) as tsvfile:
+                reader = csv.reader(tsvfile, delimiter='\t')
+                for i, row in tqdm.tqdm(enumerate(reader), total=8841823, desc="loading docs", leave=False):
+                    passage_id, passage_text = row
+                    self.collection[f"MARCO_{int(passage_id)}"] = passage_text
         
         splits = ["train","dev","eval"]
         self.queries = {}
@@ -243,35 +252,139 @@ class MS_Marco_RawDataLoader(RawDataLoader):
                 
     def load_queries(self, split):
         query_dict = {}
-        with open(os.path.join(self.MARCO_data_directory, f"queries.{split}.tsv")) as tsvfile:
+        with open(os.path.join(self.data_directory, f"queries.{split}.tsv")) as tsvfile:
             reader = csv.reader(tsvfile, delimiter='\t')
-            for i, row in tqdm.tqdm(enumerate(reader)):
+            for i, row in tqdm.tqdm(enumerate(reader), desc=f"loading {split} queries", leave=False):
                 q_id, q_text = row
-                query_dict[int(q_id)] = q_text
+                query_dict[q_id] = q_text
         return query_dict
     
+    def get_doc(self, d_id, **kwargs):
+        return self.collection[d_id]
+    def get_query(self, q_id, **kwargs):
+        return self.queries[q_id]
+    
+    def get_topics(self, split):
+        '''
+        split: str: "train", "dev", "eval"
+        returns: [dict]: [{'q_id':"32_4", 'q_rel':["MARCO_xxx",..]},...]
+        '''
+        q_ids = list(self.load_queries(split).keys())
+        q_rels = self.q_rels(split)
+        return [{'q_id':q_id, 'q_rel':q_rels[q_id]} for q_id in q_ids if q_id in q_rels]
+    
     def q_rels(self, split):
+        '''
+        returns: dict: {'q_id':[d_id, d_id,...],...}
+        '''
         q_rels_dict = {}
-        with open(os.path.join(self.MARCO_data_directory, f"qrels.{split}.tsv")) as tsvfile:
+        with open(os.path.join(self.data_directory, f"qrels.{split}.tsv")) as tsvfile:
             reader = csv.reader(tsvfile, delimiter='\t')
-            for i, row in tqdm.tqdm(enumerate(reader)):
+            for i, row in tqdm.tqdm(enumerate(reader), desc="loading q_rels", leave=False):
                 q_id, _, passage_id, _ = row
                 if int(q_id) in q_rels_dict:
-                    q_rels_dict[int(q_id)].append(int(passage_id))
+                    q_rels_dict[q_id].append(int(passage_id))
                 else:
-                    q_rels_dict[int(q_id)] = [int(passage_id)]
+                    q_rels_dict[q_id] = [f"MARCO_{int(passage_id)}"]
         return q_rels_dict
     
 
-class CAsT_Year2_RawDataLoader(RawDataLoader):
-    def __init__(self, CAsT_data_dir="/nfs/phd_by_carlos/notebooks/datasets/TREC_CAsT/", **kwargs):
-        MARCO_raw_data_loader = MS_Marco_RawDataLoader(**kwargs)
+class CAsT_RawDataLoader():
+    def __init__(self, CAsT_index="/nfs/phd_by_carlos/notebooks/datasets/TREC_CAsT/CAsT_collection_with_meta.index",
+                 treccastweb_dir="/nfs/phd_by_carlos/notebooks/datasets/TREC_CAsT/treccastweb",
+                 NIST_qrels="/nfs/phd_by_carlos/notebooks/datasets/TREC_CAsT/2019qrels.txt", **kwargs):
         
-#         def get_JSON_turns(file):
-#             with open(file) as CAsT_turns_file:
-#                 data = json.load(CAsT_turns_file)
+        self.searcher = SimpleSearcher(CAsT_index)
+        self.q_rels = {}
+        with open(NIST_qrels) as NIST_fp:
+            for line in NIST_fp.readlines():
+                q_id, _, d_id, score = line.split(" ")
+                if int(score) < 3:
+                    # ignore some of the worst ranked
+                    continue
+                if q_id not in self.q_rels:
+                    self.q_rels[q_id] = []
+                self.q_rels[q_id].append(d_id)
+                
+        with open(os.path.join(treccastweb_dir,"2020/2020_manual_evaluation_topics_v1.0.json")) as y2_fp:
+            y2_data = json.load(y2_fp)
+            for topic in y2_data:
+                topic_id = topic["number"]
+                for turn in topic["turn"]:
+                    turn_id = turn["number"]
+                    q_id = f"{topic_id}_{turn_id}"
+                    if q_id not in self.q_rels:
+                        self.q_rels[q_id] = []
+                    self.q_rels[q_id].append(turn["manual_canonical_result_id"])
         
-#         with open(os.path.join(self.CAsT_data_dir, f"treccastweb/2019/data/training/")) as nist_qrels_f:
+        year1_query_collection, self.year1_topics = self.load_CAsT_topics_file(os.path.join(treccastweb_dir,"2019/data/evaluation/evaluation_topics_v1.0.json"))
+        year2_query_collection, self.year2_topics = self.load_CAsT_topics_file(os.path.join(treccastweb_dir,"2020/2020_manual_evaluation_topics_v1.0.json"))
         
-#         with open(os.path.join(self.CAsT_data_dir, f"2019qrels.txt")) as nist_qrels_f:
-#             nist_qrels =  
+        self.query_collection = {**year1_query_collection, **year2_query_collection}
+        
+        with open(os.path.join(treccastweb_dir, "2019/data/evaluation/evaluation_topics_annotated_resolved_v1.0.tsv")) as resolved_f:
+            reader = csv.reader(resolved_f, delimiter="\t")
+            for row in reader:
+                q_id, resolved_query = row
+                if q_id in self.query_collection:
+                    self.query_collection[q_id]["manual_rewritten_utterance"] = resolved_query
+    
+    def NIST_result_curve(self, score):
+        "0->0, 1~>0.1, 3~>0.6, 4->1"
+        return (1/16)*(score**2)
+        
+    def load_CAsT_topics_file(self, file):
+        query_collection = {}
+        topics = {}
+        with open(file) as topics_fp:
+            topics_data = json.load(topics_fp)
+            for topic in topics_data:
+                previous_turns = []
+                topic_id = topic["number"]
+                for turn in topic["turn"]:
+                    turn_id = turn["number"]
+                    q_id = f"{topic_id}_{turn_id}"
+                    if q_id not in self.q_rels:
+                        continue
+                    query_collection[q_id] = turn
+                    topics[q_id] = previous_turns[:]
+                    previous_turns.append(q_id)
+            return query_collection, topics
+        
+        
+       
+    def get_doc(self, doc_id):
+        raw_text = self.searcher.doc(doc_id).raw()
+        paragraph = raw_text[raw_text.find('<BODY>\n')+7:raw_text.find('\n</BODY>')]
+        return paragraph
+    
+    def get_split(self, split):
+        '''
+        return: dict: {q_id: [q_id,...]}: contains the query turns and the previous query turns for the topic
+        '''
+        dev_topic_cutoff = 71
+        if split == "train":
+            return {k:v for k,v in self.year1_topics.items() if int(k.split("_")[0]) < dev_topic_cutoff}
+        elif split == "dev":
+            return {k:v for k,v in self.year1_topics.items() if int(k.split("_")[0]) >= dev_topic_cutoff}
+        elif split == "all":
+            return self.year1_topics
+        elif split == "eval":
+            return self.year2_topics
+        else:
+            raise Exception(f"Split '{split}' not recognised")
+    
+    def get_topics(self, split):
+        '''
+        split: str: "train", "dev", "all", "eval"
+        returns: [dict]: [{'q_id':"32_4", 'q_rel':["CAR_xxx",..]}, 'prev_turns':["32_3",..],...]
+        '''
+        topic_split = self.get_split(split)
+        samples = [{'prev_turns':prev_turns, 'q_id':q_id, 'q_rel':self.q_rels[q_id]} for q_id, prev_turns in topic_split.items()]
+        return samples
+    
+    def get_query(self, q_id, utterance_type="raw_utterance"):
+        '''
+        >>> raw_data_loader.get_query("31_4", utterance_type="manual_rewritten_utterance")
+        '''
+        return self.query_collection[q_id][utterance_type]

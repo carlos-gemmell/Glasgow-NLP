@@ -1,14 +1,11 @@
-from torchtext.data import Field, BucketIterator
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torchtext
 import time
 import math
-import tqdm
-from .useful_utils import super_print
+from tqdm.auto import tqdm 
 import os
-import datetime
+from pytorch_lightning.utilities import move_data_to_device
+from pytorch_lightning.overrides.data_parallel import LightningDataParallel
     
 def is_interactive():
     import __main__ as main
@@ -18,148 +15,56 @@ if is_interactive():
 import numpy as np
 
 class Model_Trainer():
-    def __init__(self, model, vocab, test_iterator=None, output_dir=None):
-        self.model = model
-        self.vocab = vocab
-        self.test_iterator = test_iterator
-        self.model.stats["train_loss"] = []
-        self.model.stats["eval_scores"] = []
-        if output_dir:
-            self.experiment_name = output_dir
-            self.output_dir = os.path.join(os.getcwd(), output_dir)
-            if not os.path.exists(self.output_dir):
-                os.makedirs(self.output_dir)
-            log_dir = os.path.join(output_dir, "logs.txt")
-            self.writer = super_print(log_dir)(print)
-            self.writer(f"Writing logs to: {log_dir}")
-        else:
-            self.output_dir = None
-            self.writer = print
-            self.writer("'output_dir' not defined, training and model outputs won't be saved.")
-
-    def train(self, model, iterator, steps, log_interval=100, eval_interval=1000, save_interval=2000, learning_interval=4000):
+    def __init__(self, gpus=[]):
+        self.stats = {}
+        self.stats["train_loss"] = []
+        self.stats["eval_scores"] = []
+        self.gpus = gpus
         
-        self.model.train() # Turn on the train mode
-        total_loss = 0.
-        start_time = time.time()
-        step = 1
-#         try:
-        pbar = tqdm.tqdm(iterator, total=steps)
-        for batch in pbar:
-            loss = self.model.train_step(batch)
-            total_loss += loss.item()
-
-            if step % log_interval == 0:
-                cur_loss = total_loss / log_interval
-                pbar.set_description(f"Loss:{cur_loss:5.2f}, Perplx:{math.exp(cur_loss):5.2f}")
-                sumary = {"step":step, "loss":round(cur_loss, 2)}
-                self.model.stats["train_loss"].append(sumary)
-                total_loss = 0
-                
-
-            if step % eval_interval == 0 and self.test_iterator:
-                self.writer("Evaluating model")
-                scores = self.evaluate(self.test_iterator)
-                score_keys = scores[0].keys()
-                sumary = {"step":step}
-                for key in score_keys:
-                    if isinstance(scores[0][key], (int, float)):
-                        avg_score = np.average([score[key] for score in scores])
-                        sumary[key] = avg_score
-                        self.writer(f"{key}:{avg_score:5.3f}")
-                self.model.stats["eval_scores"].append(sumary)
-                if self.output_dir:
-                    self.model.plot_stats(os.path.join(self.output_dir, "training_plots.png"))
-                elapsed = time.time() - start_time
-                estimated_time_left = elapsed * ((steps - step)/step)
-                self.writer(f"Step {step}/{steps}, estimated finish: {str(datetime.timedelta(seconds=estimated_time_left))}")
-                model.train()
-            
-            if step % save_interval == 0:
-                self.model.save_model(os.path.join(self.output_dir, f"model_file_step_{step}.torch"))
-
-            if step % learning_interval == 0:
-                self.model.scheduler.step()
-
-            step += 1
-            if step >= steps:
-                self.writer("Finished training")
-                return self.model.stats
-#         except KeyboardInterrupt:
-#             print("Keyboard Interrupt!")
-#             return self.model.stats
+        print(f"Detected {torch.cuda.device_count()} GPUS available, using {gpus}.")
         
-    def evaluate(self, test_iterator, save_file="eval_samples.txt"):
-        self.model.eval()
-        with torch.no_grad():
-            eval_scores = []
-            pbar = tqdm.tqdm(enumerate(test_iterator), total=len(test_iterator))
-            for i, batch in pbar:
-                batch_eval_outputs = self.model.eval_step(batch, self.vocab)
-                eval_scores += batch_eval_outputs
-        if self.output_dir:
-            self.model.save_eval_results(eval_scores, os.path.join(self.output_dir, save_file))
-        return eval_scores
-    
-class Generic_Model_Trainer():
-    def __init__(self, output_dir=None):
-        self.mid_train_results = {}
-        if output_dir:
-            self.experiment_name = output_dir
-            self.output_dir = os.path.join(os.getcwd(), output_dir)
-            if not os.path.exists(self.output_dir):
-                os.makedirs(self.output_dir)
-            log_dir = os.path.join(output_dir, "logs.txt")
-            self.writer = super_print(log_dir)(print)
-            self.writer(f"Writing logs to: {log_dir}")
-        else:
-            self.output_dir = None
-            self.writer = print
-            self.writer("'output_dir' not defined, training and model outputs won't be saved.")
+        self.device = torch.device(f"cuda:{gpus[0]}" if torch.cuda.is_available() else "cpu")
+        print(f"Main device is: {self.device}")
+
+    def train(self, model, dataloader, epochs=float("inf"), valid_interval=2, save_interval=1, dp=False):
+        
+        optimizer = model.configure_optimizers()
+        
+        model.to(self.device)
+        if dp:
+            model = LightningDataParallel(model, device_ids=self.gpus)
             
-    def train(self, model, iterator, steps, evaluation_fn=None, log_interval=100, eval_interval=1000, save_interval=2000, learning_interval=4000):
         
         model.train() # Turn on the train mode
-        total_loss = 0.
-        start_time = time.time()
-        step = 1
-        self.mid_train_results["train_loss"] = []
-        self.mid_train_results["eval_results"] = []
+        current_epoch = 1
         try:
-            pbar = tqdm.tqdm(iterator, total=steps)
-            for batch in pbar:
-                loss = model.train_step(batch)
-                total_loss += loss.item()
-
-                if step % log_interval == 0:
-                    cur_loss = total_loss / log_interval
-                    pbar.set_description(f"Loss:{cur_loss:5.2f}, Perplx:{math.exp(cur_loss):5.2f}")
-                    sumary = {"step":step, "loss":round(cur_loss, 2)}
-                    self.mid_train_results["train_loss"].append(sumary)
-                    total_loss = 0
-
-
-                if step % eval_interval == 0 and evaluation_fn:
-                    self.writer("Evaluating model")
-                    model.eval()
-                    scores = evaluation_fn(model.raw_predict)
-                    model.train()
-                    self.mid_train_results["eval_results"].append(scores)
-                    elapsed = time.time() - start_time
-                    estimated_time_left = elapsed * ((steps - step)/step)
-                    self.writer(f"Step {step}/{steps}, estimated finish: {str(datetime.timedelta(seconds=estimated_time_left))}")
-
-                if step % save_interval == 0:
-                    self.model.save(os.path.join(self.output_dir, f"model_file_step_{step}.torch"))
-
-                if step % learning_interval == 0:
-                    self.model.scheduler.step()
-
-                step += 1
-                if step >= steps:
-                    self.writer("Finished training")
+            while current_epoch < epochs:
+                pbar = tqdm.tqdm(dataloader, total=len(dataloader))
+                for idx, batch in enumerate(pbar):
+                    batch = move_data_to_device(batch, self.device)
+                    if dp:
+                        loss_obj = model(batch, idx)
+                        loss = loss_obj["loss"].mean()
+                    else:
+                        loss_obj = model.training_step(batch, idx)
+                        loss = loss_obj["loss"]
+                    loss.backward()
                     
+#                     optimizer.step()
+
+                    pbar.set_description(f"Epoch: {current_epoch}, Loss:{loss:5.2f}")
+                    self.stats["train_loss"].append(loss)
+
         except KeyboardInterrupt:
             print("Keyboard Interrupt!")
+            return self.stats
+        print("finished training")
+        return self.stats
         
-        return self.model.stats
+    def _batch_to_device(self, batch):
+        if isinstance(batch, dict):
+            for key in list(batch.keys()):
+                batch[key].to(self.device)
+            return batch
+        else:
+            print("not supperted yet")
