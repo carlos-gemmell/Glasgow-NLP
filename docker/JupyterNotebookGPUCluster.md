@@ -14,6 +14,11 @@ docker build -t aquaktus/docker_ml_by_carlos:v2 -f ./Dockerfile.gpu.tf2.0.pytorc
 docker push aquaktus/docker_ml_by_carlos:v2
 ```
 
+Running the docker hub insttance locally
+```
+docker run --name deep_phd_env --rm -p ${2:-8888}:${2:-8888} -v $PWD/../:/my_shared/ aquaktus/docker_ml_by_carlos:v10 jupyter-lab --ip 0.0.0.0 --no-browser --allow-root --notebook-dir="/my_shared"
+```
+
 ### Running an executable job on the cluster
 Here we run a notebook as a script passing the location of a `config.json` file as an environment variable: `CONFIG`.
 ```
