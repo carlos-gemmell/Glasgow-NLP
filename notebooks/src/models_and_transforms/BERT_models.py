@@ -11,7 +11,6 @@ from src.RawDataLoaders import MS_Marco_RawDataLoader
 from src.models_and_transforms.text_transforms import Reranking_Sampler_Transform, q_id_Denumericalize_Transform, d_id_Denumericalize_Transform
 # from src.models_and_transforms.complex_transforms import Manual_Query_Doc_Pipe_Transform
 from src.Experiments import Ranking_Experiment
-import pytorch_warmup as warmup
 
 
 class BERT_Reranker(LightningModule):
