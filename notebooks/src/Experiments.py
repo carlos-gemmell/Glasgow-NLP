@@ -8,6 +8,7 @@ from .useful_utils import string_split_v3, string_split_v1, chunks
 import pytrec_eval
 import json
 from tqdm.auto import tqdm 
+from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
 
 class Experiment(ABC):
     def __init__(self, task_data):
@@ -138,7 +139,7 @@ class Ranking_Experiment():
         pytrec_q_rels = {}
         for q_id, d_ids in q_rels.items():
             pytrec_q_rels[q_id] = {d_id:1 for d_id in d_ids}
-        self.evaluator = pytrec_eval.RelevanceEvaluator(pytrec_q_rels, {'map', 'ndcg', 'set_recall', 'recip_rank'})
+        self.evaluator = pytrec_eval.RelevanceEvaluator(pytrec_q_rels, {'map', 'ndcg_cut_3', 'set_recall', 'recip_rank'})
         
     def dict_mean(self, dict_list):
         mean_dict = {}
@@ -160,6 +161,32 @@ class Ranking_Experiment():
         results = self.evaluator.evaluate(pytrec_run)
         aggregate = self.dict_mean(list(results.values()))
         return aggregate
+    
+class Sequence_Similarity_Experiment():
+    def __init__(self, save_name="sequence_outputs.txt"):
+        '''
+        An Experiment to evaluate sequence similarity through metrics like: BLEU or token accuracy.
+        '''
+    
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'target_seq':"taget text", 'predicted_seq':"pred text"},...]
+        '''
+        
+        samples = self.__transform__(samples)
+        BLEU = np.average([s["BLEU"] for s in samples])
+        return {"BLEU":BLEU}
+    
+    def __transform__(self, samples):
+        '''
+        samples: [dict]: [{'target_seq':"taget text", 'predicted_seq':"pred text"},...]
+        returns: [dict]: [{'target_seq':"taget text", 'predicted_seq':"pred text", "BELU":0.6},...]
+        '''
+        for sample_obj in samples:
+            ngram_weights = [0.25] * min(4, len(sample_obj['target_seq']))
+            sample_obj["BLEU"] = sentence_bleu([sample_obj['target_seq']], sample_obj['predicted_seq'], weights=ngram_weights, 
+                          smoothing_function=SmoothingFunction().method3)
+        return samples
     
     
 class RUN_File_Transform_Exporter():

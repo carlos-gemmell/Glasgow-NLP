@@ -69,14 +69,19 @@ class BM25_Search_Transform():
         return samples
     
 class BERT_Score_Transform():
-    def __init__(self, checkpoint_path, batch_size=64, PAD_id = 0, **kwargs):
+    def __init__(self, checkpoint_path, device=None, batch_size=64, PAD_id = 0, **kwargs):
         '''
         checkpoint_path: str: path to only the state dict of the model, loaded with load_state_dict
         '''
-        self.device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
+        if device:
+            self.device = device
+        else:
+            self.device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
         
-        self.BERT_Reranker = BERT_Reranker().to(self.device)
-        print(self.BERT_Reranker.load_state_dict(torch.load(checkpoint_path)))
+        self.BERT_Reranker = BERT_Reranker()
+        print(self.BERT_Reranker.device)
+        print(self.BERT_Reranker.load_state_dict(torch.load(checkpoint_path, map_location=self.device)))
+        self.BERT_Reranker.to(self.device)
         self.BERT_Reranker.eval()
         self.batch_size = batch_size
         self.PAD = PAD_id
@@ -161,3 +166,7 @@ class Random_ReRanker_Transform():
         for sample_obj in samples:
             sample_obj["reranked_results"] = random.shuffle(sample_obj["search_results"][:])
         return samples
+    
+class BART_Quuery_ReWriter_Transform():
+    def __init__(self, checkpoint_path):
+        pass
