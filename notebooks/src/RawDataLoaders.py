@@ -1,5 +1,5 @@
 from .file_ops import corpus_to_array
-from .useful_utils import filter_corpus, clean_samples, string_split_v3, jsonl_dir_to_data
+from .useful_utils import filter_corpus, clean_samples, string_split_v3, jsonl_dir_to_data, download_from_url
 
 from torchtext.data import Field, BucketIterator
 import torchtext
@@ -13,14 +13,9 @@ import pickle
 from pyserini.search import SimpleSearcher
 from .metrics import RecipRank, doc_search_subtask
 import csv
-import tqdm
-def is_interactive():
-    import __main__ as main
-    return not hasattr(main, '__file__')
-if is_interactive():
-    import tqdm.notebook as tqdm 
-
 import os
+from tqdm.auto import tqdm 
+
 from abc import ABC, abstractmethod
 
 class SRC_TGT_pairs():
@@ -228,12 +223,28 @@ class Parseable_Django_RawDataLoader(Django_RawDataLoader):
         print("Flitered test ratio:",len(self.test_pairs), len(parse_tree_processor.task_data))
         self.test_pairs = parse_tree_processor.task_data
         
+class CAR_RawDataLoader(RawDataLoader):
+    def __init__(self, data_directory="/nfs/phd_by_carlos/notebooks/datasets/TREC_CAR/", **kwargs):
+        self.data_directory = data_directory
+        if not os.path.exists(data_directory):
+            os.makedirs(data_directory)
+            
+        if not os.path.isfile(collection_dir):    
+            pass
 
 class MS_Marco_RawDataLoader(RawDataLoader):
-    def __init__(self, data_directory="/nfs/phd_by_carlos/notebooks/datasets/MS_MARCO/", from_pickle=False, **kwargs):
+    def __init__(self, data_directory="/nfs/phd_by_carlos/notebooks/datasets/MS_MARCO/", **kwargs):
         self.data_directory = data_directory
+        if not os.path.exists(data_directory):
+            os.makedirs(data_directory)
         
-        if from_pickle:
+        collection_dir = os.path.join(data_directory, "collection.tsv")
+        if not os.path.isfile(collection_dir):
+            gzip_file = os.path.join(data_directory, "collection.tsv.gz")
+            download_from_url("https://msmarco.blob.core.windows.net/msmarcoranking/collection.tar.gz", gzip_file)
+            os.system(f'gzip -dk {gzip_file}')
+        
+        if os.path.isfile(os.path.join(data_directory, "collection.pickle")):
             with open(os.path.join(data_directory, "collection.pickle"), "rb") as f:
                 # pickle.dump(raw_data_loader.collection, open("datasets/MS_MARCO/collection.pickle", "wb"), protocol=pickle.HIGHEST_PROTOCOL)
                 self.collection = pickle.load(f)
@@ -241,9 +252,15 @@ class MS_Marco_RawDataLoader(RawDataLoader):
             self.collection = {}
             with open(os.path.join(data_directory, "collection.tsv")) as tsvfile:
                 reader = csv.reader(tsvfile, delimiter='\t')
-                for i, row in tqdm.tqdm(enumerate(reader), total=8841823, desc="loading docs", leave=False):
+                for i, row in tqdm(enumerate(reader), total=8841823, desc="loading docs", leave=False):
                     passage_id, passage_text = row
                     self.collection[f"MARCO_{int(passage_id)}"] = passage_text
+                pickle.dump(self.collection, open(os.path.join(data_directory, "collection.pickle"), "wb"), protocol=pickle.HIGHEST_PROTOCOL)
+        
+        queries_zip_file = os.path.join(data_directory, "queries.tar.gz")
+        if not os.path.isfile(queries_zip_file):
+            download_from_url("https://msmarco.blob.core.windows.net/msmarcoranking/queries.tar.gz", queries_zip_file)
+            os.system(f'tar -xvzf {queries_zip_file} -C {data_directory}')
         
         splits = ["train","dev","eval"]
         self.queries = {}
@@ -251,10 +268,10 @@ class MS_Marco_RawDataLoader(RawDataLoader):
             self.queries.update(self.load_queries(split))
                 
     def load_queries(self, split):
-        query_dict = {}
+        query_dict = {}                     
         with open(os.path.join(self.data_directory, f"queries.{split}.tsv")) as tsvfile:
             reader = csv.reader(tsvfile, delimiter='\t')
-            for i, row in tqdm.tqdm(enumerate(reader), desc=f"loading {split} queries", leave=False):
+            for i, row in tqdm(enumerate(reader), desc=f"loading {split} queries", leave=False):
                 q_id, q_text = row
                 query_dict[q_id] = q_text
         return query_dict
@@ -278,9 +295,13 @@ class MS_Marco_RawDataLoader(RawDataLoader):
         returns: dict: {'q_id':[d_id, d_id,...],...}
         '''
         q_rels_dict = {}
-        with open(os.path.join(self.data_directory, f"qrels.{split}.tsv")) as tsvfile:
+        q_rels_file = os.path.join(self.data_directory, f"q_rels.{split}.tsv")
+        if not os.path.isfile(q_rels_file):
+            download_from_url(f"https://msmarco.blob.core.windows.net/msmarcoranking/qrels.{split}.tsv", q_rels_file)
+                                     
+        with open(q_rels_file) as tsvfile:
             reader = csv.reader(tsvfile, delimiter='\t')
-            for i, row in tqdm.tqdm(enumerate(reader), desc="loading q_rels", leave=False):
+            for i, row in tqdm(enumerate(reader), desc="loading q_rels", leave=False):
                 q_id, _, passage_id, _ = row
                 if int(q_id) in q_rels_dict:
                     q_rels_dict[q_id].append(int(passage_id))
