@@ -146,7 +146,7 @@ class BERT_Numericalise_Transform():
         returns: [dict]: [{'input_ids':[34,2,8...], 'input_text':"text and more", ...}]
         '''
         for sample_obj in samples:
-            sample_obj["input_ids"] = self.numericalizer.encode(sample_obj["input_text"])
+            sample_obj["input_ids"] = self.numericalizer.encode(sample_obj["input_text"], truncation=True)
         return samples
     
 class BART_Numericalise_Transform():
@@ -162,6 +162,21 @@ class BART_Numericalise_Transform():
         for sample_obj in samples:
             for str_field, id_field in self.fields:
                 sample_obj[id_field] = self.numericalizer.encode(sample_obj[str_field])
+        return samples
+
+class BART_Denumericalise_Transform():
+    def __init__(self, fields=[("input_ids","input_text")]):
+        self.numericalizer = BartTokenizer.from_pretrained('facebook/bart-large')
+        self.fields = fields
+    
+    def __call__(self, samples):
+        '''
+        sample_obj: [dict]: [{'input_ids':[34,2,8...], ...}]
+        returns: [dict]: [{'input_ids':[34,2,8...], 'input_text':"text and more", ...}]
+        '''
+        for sample_obj in samples:
+            for str_field, id_field in self.fields:
+                sample_obj[id_field] = self.numericalizer.decode(sample_obj[str_field],skip_special_tokens=True)
         return samples
     
 class q_id_Numericalize_Transform():
@@ -251,7 +266,7 @@ class Rewriter_Context_Query_Merge_Transform():
         This Transform merges queries from previous turns and the current unresolved query into a single input sequence.
         '''
     
-    def __call__(self, samples):
+    def __call__(self, samples, merge_type=""):
         '''
         samples: [dict]: [{'unresolved_query':'query text', 'previous_queries':['first query text', 'second query text']}]
         '''
