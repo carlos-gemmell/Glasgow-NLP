@@ -261,15 +261,36 @@ class Rewriter_Query_Resolver_Transform():
         return samples
     
 class Rewriter_Context_Query_Merge_Transform():
-    def __init__(self):
+    def __init__(self, **kwargs):
         '''
         This Transform merges queries from previous turns and the current unresolved query into a single input sequence.
         '''
+        pass
     
-    def __call__(self, samples, merge_type=""):
+    def __call__(self, samples):
         '''
         samples: [dict]: [{'unresolved_query':'query text', 'previous_queries':['first query text', 'second query text']}]
+        returns: [dict]: [{'input_text':'merged query text', 'unresolved_query':'query text', 'previous_queries':['first query text',]}]
         '''
         for sample_obj in samples:
             sample_obj["input_text"] = " ".join(sample_obj['previous_queries']) + " query: " + sample_obj['unresolved_query']
+        return samples
+    
+class Rewriter_Context_Target_Transform():
+    def __init__(self,  merge_mode="full_context_rewrite", **kwargs):
+        '''
+        This Transform merges queries from previous turns and the current RESOLVED target query to make the target sequence to be predicted.
+        '''
+        self.merge_mode = merge_mode
+    
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'resolved_query':'resolvedquery text', 'previous_queries':['first query text', 'second query text']}]
+        returns: [dict]: [{'target_text':'merged query text', 'unresolved_query':'query text', 'previous_queries':['first query text',]}]
+        '''
+        for sample_obj in samples:
+            if self.merge_mode == "full_context_rewrite":
+                sample_obj["target_text"] = " ".join(sample_obj['previous_queries']) + " query: " + sample_obj['resolved_query']
+            elif self.merge_mode == "last_turn_rewrite":
+                sample_obj["target_text"] = sample_obj['resolved_query']
         return samples

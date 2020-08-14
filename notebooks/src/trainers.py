@@ -21,10 +21,14 @@ class Model_Trainer():
         self.stats["eval_scores"] = []
         self.gpus = gpus
         
-        print(f"Detected {torch.cuda.device_count()} GPUS available, using {gpus}.")
-        
-        self.device = torch.device(f"cuda:{gpus[0]}" if torch.cuda.is_available() else "cpu")
-        print(f"Main device is: {self.device}")
+        if len(gpus)==0:
+            self.device = 'cpu'
+        elif len(gpus)==1:
+            self.device = f"cuda:{gpus[0]}"
+            print(f"Detected {torch.cuda.device_count()} GPUS available, using {gpus}.")
+        elif len(gpus)>1:
+            self.device = f"cuda:{gpus[0]}"
+            print(f"Main device is: {self.device}")
 
     def train(self, model, dataloader, epochs=float("inf"), valid_interval=2, save_interval=1, dp=False):
         
@@ -35,12 +39,13 @@ class Model_Trainer():
             model = LightningDataParallel(model, device_ids=self.gpus)
             
         
-        model.train() # Turn on the train mode
+        model.eval() # Turn on the train mode
         current_epoch = 1
         try:
             while current_epoch < epochs:
                 pbar = tqdm.tqdm(dataloader, total=len(dataloader))
                 for idx, batch in enumerate(pbar):
+                    optimizer.zero_grad()
                     batch = move_data_to_device(batch, self.device)
                     if dp:
                         loss_obj = model(batch, idx)
@@ -49,8 +54,10 @@ class Model_Trainer():
                         loss_obj = model.training_step(batch, idx)
                         loss = loss_obj["loss"]
                     loss.backward()
+                    if torch.isnan(loss):
+                        return batch
                     
-#                     optimizer.step()
+                    optimizer.step()
 
                     pbar.set_description(f"Epoch: {current_epoch}, Loss:{loss:5.2f}")
                     self.stats["train_loss"].append(loss)

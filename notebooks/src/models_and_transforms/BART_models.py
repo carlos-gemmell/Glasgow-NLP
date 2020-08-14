@@ -50,7 +50,7 @@ class BART_Query_ReWriter(LightningModule):
         input_mask = batch['input_attention_mask']
         decoder_target = batch['decoder_target_ids']
         
-        outputs = self.generate(encoder_input, attention_mask=input_mask, num_beams=4, max_length=40, early_stopping=True)
+        outputs = self.generate(encoder_input, attention_mask=input_mask, num_beams=4, max_length=512, early_stopping=True)
         batch["generated_ids"] = outputs
         return batch
         
@@ -69,6 +69,13 @@ class BART_Query_ReWriter(LightningModule):
                                                                        ('input_ids', 'input_text'),
                                                                        ('target_ids', 'target_seq')])
         samples = denumericalize_transform(samples)
+#         for sample_obj in samples:
+#             sample_obj["target_seq"] = sample_obj["target_seq"].split("query:")[-1]
+#             query_elements = sample_obj["predicted_seq"].split("query:")
+#             if len(query_elements) > 1:
+#                 sample_obj["predicted_seq"] = query_elements[-1]
+#             else:
+#                 sample_obj["predicted_seq"] = query_elements[0]
         experiment = Sequence_Similarity_Experiment()
         metrics = experiment(samples)
         print(metrics)

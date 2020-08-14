@@ -365,8 +365,8 @@ class CAsT_RawDataLoader():
                 for turn in topic["turn"]:
                     turn_id = turn["number"]
                     q_id = f"{topic_id}_{turn_id}"
-                    if q_id not in self.q_rels:
-                        continue
+#                     if q_id not in self.q_rels:
+#                         continue
                     query_collection[q_id] = turn
                     topics[q_id] = previous_turns[:]
                     previous_turns.append(q_id)
@@ -395,13 +395,15 @@ class CAsT_RawDataLoader():
         else:
             raise Exception(f"Split '{split}' not recognised")
     
-    def get_topics(self, split):
+    def get_topics(self, split, ignore_missing_q_rels=False):
         '''
         split: str: "train", "dev", "all", "eval"
         returns: [dict]: [{'q_id':"32_4", 'q_rel':["CAR_xxx",..]}, 'prev_turns':["32_3",..],...]
         '''
         topic_split = self.get_split(split)
-        samples = [{'prev_turns':prev_turns, 'q_id':q_id, 'q_rel':self.q_rels[q_id]} for q_id, prev_turns in topic_split.items()]
+        samples = []
+        samples = [{'prev_turns':prev_turns, 'q_id':q_id, 'q_rel':self.q_rels.get(q_id)} 
+                   for q_id, prev_turns in topic_split.items() if q_id in self.q_rels or ignore_missing_q_rels]
         return samples
     
     def get_query(self, q_id, utterance_type="raw_utterance"):

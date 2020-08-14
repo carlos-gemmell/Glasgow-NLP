@@ -1,6 +1,6 @@
 from src.models_and_transforms.text_transforms import Query_Resolver_Transform, Reranking_Sampler_Transform, Reranking_Flattener_Transform, \
                                                       Rewriter_Query_Resolver_Transform, Rewriter_Context_Query_Merge_Transform, \
-                                                      BART_Numericalise_Transform
+                                                      BART_Numericalise_Transform, Rewriter_Context_Target_Transform
 from src.models_and_transforms.complex_transforms import BM25_Search_Transform, Manual_Query_Doc_Pipe_Transform, RUN_File_Search_Transform
 from src.RawDataLoaders import MS_Marco_RawDataLoader
 
@@ -163,8 +163,9 @@ class CAsT_Query_ReWriting_Dataset(Pipe_Dataset):
         '''
         slow_pipe = [Rewriter_Query_Resolver_Transform(get_query_fn)]
         fast_pipe = [
-            Rewriter_Context_Query_Merge_Transform(),
-            BART_Numericalise_Transform(fields=[('input_text', 'input_ids'), ('resolved_query', 'target_ids')])
+            Rewriter_Context_Query_Merge_Transform(**kwargs),
+            Rewriter_Context_Target_Transform(**kwargs),
+            BART_Numericalise_Transform(fields=[('input_text', 'input_ids'), ('target_text', 'target_ids')])
         ]
         
         super().__init__(samples, slow_pipe, fast_pipe, **kwargs)
