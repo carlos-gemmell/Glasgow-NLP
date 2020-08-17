@@ -149,6 +149,54 @@ class BERT_Numericalise_Transform():
             sample_obj["input_ids"] = self.numericalizer.encode(sample_obj["input_text"], truncation=True)
         return samples
     
+class MonoBERT_Numericalise_Transform():
+    def __init__(self, vocab_txt_file="saved_models/monoBERT/vocab.txt", **kwargs):
+        self.numericalizer = BertTokenizer(vocab_txt_file)
+    
+    def __call__(self, samples):
+        '''
+        sample_obj: [dict]: [{'query':"text and more", 'doc':"doc text" ...}]
+        returns: [dict]: [{'input_ids':[34,2,8...], 'type_ids':[0,0,1,1], 'input_text':"text and more", ...}]
+        '''
+        for sample_obj in samples:
+            query_text = sample_obj['query']
+            query_ids = [self.numericalizer.cls_token_id] + self.numericalizer.encode(query_text, add_special_tokens=False)[:62] + [self.numericalizer.sep_token_id]
+            query_token_type_ids = [0]*len(query_ids)
+            
+            doc_text = sample_obj['doc']
+            doc_ids = self.numericalizer.encode(doc_text, add_special_tokens=False)[:445] + [self.numericalizer.sep_token_id]
+            doc_token_type_ids = [1]*len(doc_ids)
+            
+            sample_obj["input_ids"] = query_ids+doc_ids
+            sample_obj["type_ids"] = query_token_type_ids+doc_token_type_ids
+        return samples
+    
+class DuoBERT_Numericalise_Transform():
+    def __init__(self, vocab_txt_file=None):
+        self.numericalizer = BertTokenizer(vocab_txt_file)
+    
+    def __call__(self, samples):
+        '''
+        sample_obj: [dict]: [{'query':"text and more", 'docA':"docA text", 'docB':"docB text" ...}]
+        returns: [dict]: [{'input_ids':[34,2,8...], 'type_ids':[0,0,1,1], 'input_text':"text and more", ...}]
+        '''
+        for sample_obj in samples:
+            query_text = sample_obj['query']
+            query_ids = [self.numericalizer.cls_token_id]+self.numericalizer.encode(query_text, add_special_tokens=False)[:62]+[self.numericalizer.sep_token_id]
+            query_token_type_ids = [0]*len(query_ids)
+            
+            docA_text = sample_obj['docA']
+            docA_ids = self.numericalizer.encode(docA_text, add_special_tokens=False)[:223] + [self.numericalizer.sep_token_id]
+            docA_token_type_ids = [1]*len(docA_ids)
+            
+            docB_text = sample_obj['docB']
+            docB_ids = self.numericalizer.encode(docB_text, add_special_tokens=False)[:223] + [self.numericalizer.sep_token_id]
+            docB_token_type_ids = [2]*len(docB_ids)
+            
+            sample_obj["input_ids"] = query_ids+docA_ids+docB_ids
+            sample_obj["type_ids"] = query_token_type_ids+docA_token_type_ids+docB_token_type_ids
+        return samples
+    
 class BART_Numericalise_Transform():
     def __init__(self, fields=[("input_text","input_ids")]):
         self.numericalizer = BartTokenizer.from_pretrained('facebook/bart-large')
@@ -162,6 +210,21 @@ class BART_Numericalise_Transform():
         for sample_obj in samples:
             for str_field, id_field in self.fields:
                 sample_obj[id_field] = self.numericalizer.encode(sample_obj[str_field])
+        return samples
+
+class BERT_Denumericalise_Transform():
+    def __init__(self, fields=[("input_ids","input_text")]):
+        self.numericalizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        self.fields = fields
+    
+    def __call__(self, samples):
+        '''
+        sample_obj: [dict]: [{'input_ids':[34,2,8...], ...}]
+        returns: [dict]: [{'input_ids':[34,2,8...], 'input_text':"text and more", ...}]
+        '''
+        for sample_obj in samples:
+            for str_field, id_field in self.fields:
+                sample_obj[id_field] = self.numericalizer.decode(sample_obj[str_field])
         return samples
 
 class BART_Denumericalise_Transform():
@@ -285,7 +348,7 @@ class Rewriter_Context_Target_Transform():
     
     def __call__(self, samples):
         '''
-        samples: [dict]: [{'resolved_query':'resolvedquery text', 'previous_queries':['first query text', 'second query text']}]
+        samples: [dict]: [{'resolved_query':'resolved query text', 'previous_queries':['first query text', 'second query text']}]
         returns: [dict]: [{'target_text':'merged query text', 'unresolved_query':'query text', 'previous_queries':['first query text',]}]
         '''
         for sample_obj in samples:
@@ -293,4 +356,25 @@ class Rewriter_Context_Target_Transform():
                 sample_obj["target_text"] = " ".join(sample_obj['previous_queries']) + " query: " + sample_obj['resolved_query']
             elif self.merge_mode == "last_turn_rewrite":
                 sample_obj["target_text"] = sample_obj['resolved_query']
+        return samples
+    
+class Query_Cleaner_Transform():
+    def __init__(self, fields=[('query','cleaned_query')]):
+        '''
+        This Transform removes some of  the un-necessary halucinated text from the query re-writer.
+        '''
+        self.fields = fields
+        
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'query':"query: query text? what else?!"}]
+        returns: [dict]: [{'cleaned_query':"query text?", 'query':"query: query text? what else?!"}]
+        '''
+        for sample_obj in samples:
+            for input_field, target_field in self.fields:
+                query = sample_obj[input_field]
+                new_query = query.split("query:")[-1]
+                if "?" in new_query:
+                    new_query = new_query[:new_query.index('?')+1]
+                sample_obj[target_field] = new_query
         return samples

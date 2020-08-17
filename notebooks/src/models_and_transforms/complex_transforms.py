@@ -1,9 +1,12 @@
 from src.models_and_transforms.BM25_models import BM25_Ranker
-from src.models_and_transforms.BERT_models import BERT_Reranker
+from src.models_and_transforms.BERT_models import BERT_Reranker, BertForPassageRanking
+from src.models_and_transforms.BART_models import BART_Query_ReWriter
 from src.models_and_transforms.run_file_models import Run_File_Searcher
 from src.models_and_transforms.text_transforms import Query_Resolver_Transform, Document_Resolver_Transform, \
                                                       Query_Doc_Merge_Transform, BERT_Numericalise_Transform, \
-                                                      q_id_Numericalize_Transform, d_id_Numericalize_Transform
+                                                      q_id_Numericalize_Transform, d_id_Numericalize_Transform, \
+                                                      MonoBERT_Numericalise_Transform, BART_Numericalise_Transform, \
+                                                      BART_Denumericalise_Transform, Rewriter_Context_Query_Merge_Transform
 from src.useful_utils import chunks
 
 from tqdm.auto import tqdm 
@@ -167,6 +170,104 @@ class Random_ReRanker_Transform():
             sample_obj["reranked_results"] = random.shuffle(sample_obj["search_results"][:])
         return samples
     
-class BART_Quuery_ReWriter_Transform():
-    def __init__(self, checkpoint_path):
-        pass
+    
+class monoBERT_Scorer_Transform():
+    def __init__(self, checkpoint_dir="./saved_models/monoBERT/", device=None, PAD_id=0, batch_size=32):
+        '''
+        checkpoint_path: str: path to only the state dict of the model, loaded with load_state_dict
+        '''
+        if device:
+            self.device = device
+        else:
+            self.device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
+        
+        print(f"Loading chekcpoint from {checkpoint_dir}")
+        self.BERT_Reranker = BertForPassageRanking.from_pretrained(checkpoint_dir, from_tf=True)
+        self.BERT_Reranker.to(self.device)
+        self.BERT_Reranker.eval()
+        self.batch_size = batch_size
+        self.PAD = PAD_id
+        
+        print(f"BERT ReRanker initialised on {self.device}. Batch size {batch_size}")
+        
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'input_ids':[34,2,8...], 'type_ids':[0,0,1,1]}]
+        returns: [dict]: [{'input_ids':[34,2,8...], 'type_ids':[0,0,1,1], "score":0.56}]
+        '''
+        for sample_obj_batch in chunks(samples, self.batch_size):
+            with torch.no_grad():
+                input_tensor = torch.nn.utils.rnn.pad_sequence(
+                                [torch.tensor(sample_obj["input_ids"], dtype=torch.long) for sample_obj in sample_obj_batch], 
+                                                     padding_value=self.PAD).T.to(self.device)
+                type_ids = torch.nn.utils.rnn.pad_sequence(
+                                [torch.tensor(sample_obj["type_ids"], dtype=torch.long) for sample_obj in sample_obj_batch], 
+                                                     padding_value=self.PAD).T.to(self.device)
+                attention_mask = (input_tensor != self.PAD).type(torch.float).to(self.device)
+                scores = self.BERT_Reranker(input_tensor, attention_mask=attention_mask, token_type_ids=type_ids)[0][:,0].tolist()
+            for sample_obj, score in zip(sample_obj_batch, scores):
+                sample_obj["score"] = score
+                
+        return samples
+    
+class MonoBERT_ReRanker_Transform():
+    def __init__(self, checkpoint_dir, get_doc_fn, **kwargs):
+        '''
+        A Transform that reorders a list based on BERT query doc score
+        
+        checkpoint_path: str: path to only the state dict of the model, loaded with load_state_dict
+        '''
+        self.monoBERT_score_transform = monoBERT_Scorer_Transform(checkpoint_dir, **kwargs)
+        self.doc_resolver_transform = Document_Resolver_Transform(get_doc_fn)
+        self.monoBERT_numericalise_transform = MonoBERT_Numericalise_Transform(**kwargs)
+        
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'query':"query text",'search_results':[("MARCO_xxx", 0.4), ("CAR_xxx",0.3)..]...}]
+        returns: [dict]: [{'query':"query text",'reranked_results':[("CAR_xxx", 0.54), ("CAR_xxx",0.27)..]...}]
+        '''
+        for sample_obj in tqdm(samples, desc="Reranking queries"):
+            query = sample_obj["query"]
+            reranking_samples = [{'query':query, 'd_id':d_id} for d_id, score in sample_obj["search_results"]]
+            reranking_samples = self.doc_resolver_transform(reranking_samples)
+            reranking_samples = self.monoBERT_numericalise_transform(reranking_samples)
+            reranking_samples = self.monoBERT_score_transform(reranking_samples)
+            ordered_samples = sorted(reranking_samples, key=lambda sample: sample['score'], reverse=True)
+            sample_obj["reranked_results"] = [(sample['d_id'], sample['score']) for sample in ordered_samples]
+        return samples
+    
+class BART_Query_Rewriter_Transform():
+    def __init__(self, checkpoint_path, device=None, **kwargs):
+        '''
+        A Transform that re-writes unresolve queries based on previous turns.
+        
+        checkpoint_path: str: path to only the state dict of the model, loaded with load_state_dict
+        '''
+        if device:
+            self.device = device
+        else:
+            self.device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
+            
+        self.BART_query_rewriter = BART_Query_ReWriter(**kwargs)
+        self.BART_query_rewriter.load_state_dict(torch.load(checkpoint_path, map_location=self.device))
+        self.BART_query_rewriter.to(self.device)
+        self.BART_numericalise_transform = BART_Numericalise_Transform(fields=[('input_text','input_ids')])
+        self.BART_denumericalise_transform = BART_Denumericalise_Transform(fields=[('pred_ids','rewritten_query')])
+        self.rewriter_context_query_merge_transform = Rewriter_Context_Query_Merge_Transform()
+        print(f"BERT ReRanker initialised on {self.device}. Batch size {1}")
+    
+    def __call__(self, samples, **kwargs):
+        '''
+        samples: [dict]: [{'unresolved_query':'unresolved query text', 'previous_queries':['first query text', 'second query text']}]
+        returns: [dict]: [{'rewritten_query':'query text', 'unresolved_query':'unresolved query text', 'previous_queries':['first query text',]}]
+        '''
+        samples = self.rewriter_context_query_merge_transform(samples)
+        samples = self.BART_numericalise_transform(samples)
+        for sample_obj in tqdm(samples, desc="Re-Writing queries"):
+            input_ids = sample_obj["input_ids"]
+            
+            output_ids = self.BART_query_rewriter.generate(torch.tensor([input_ids], device=self.device), num_beams=4, max_length=512, early_stopping=True)
+            single_out_ids = output_ids[0].tolist()
+            sample_obj["pred_ids"] = single_out_ids
+        samples = self.BART_denumericalise_transform(samples)
+        return samples

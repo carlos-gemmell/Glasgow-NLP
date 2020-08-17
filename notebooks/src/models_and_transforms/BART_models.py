@@ -69,22 +69,23 @@ class BART_Query_ReWriter(LightningModule):
                                                                        ('input_ids', 'input_text'),
                                                                        ('target_ids', 'target_seq')])
         samples = denumericalize_transform(samples)
-#         for sample_obj in samples:
-#             sample_obj["target_seq"] = sample_obj["target_seq"].split("query:")[-1]
-#             query_elements = sample_obj["predicted_seq"].split("query:")
-#             if len(query_elements) > 1:
-#                 sample_obj["predicted_seq"] = query_elements[-1]
-#             else:
-#                 sample_obj["predicted_seq"] = query_elements[0]
+        for sample_obj in samples:
+            sample_obj["target_seq"] = sample_obj["target_seq"].split("query:")[-1]
+            query_elements = sample_obj["predicted_seq"].split("query:")
+            if len(query_elements) > 1:
+                sample_obj["predicted_seq"] = query_elements[-1]
+            else:
+                sample_obj["predicted_seq"] = query_elements[0]
         experiment = Sequence_Similarity_Experiment()
         metrics = experiment(samples)
         print(metrics)
-        random_sample = random.choice(samples)
-        print("-----EXAMPLE------")
-        print(f"Input Text: '{random_sample['input_text']}'")
-        print(f"      Pred: '{random_sample['predicted_seq']}'")
-        print(f"    Target: '{random_sample['target_seq']}'")
-        print("------------------")
+        for i in range(3):
+            random_sample = random.choice(samples)
+            print(f"-----EXAMPLE-{i}------")
+            print(f"Input Text: '{random_sample['input_text']}'")
+            print(f"      Pred: '{random_sample['predicted_seq']}'")
+            print(f"    Target: '{random_sample['target_seq']}'")
+            print("------------------")
         return {'val_loss':metrics["BLEU"], 'log':metrics}
             
     def configure_optimizers(self):

@@ -107,3 +107,11 @@ class BERT_Reranker(LightningModule):
     def backward(self, use_amp, loss, optimizer, _):
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.parameters(), 0.5)
+        
+        
+class BertForPassageRanking(BertForSequenceClassification):
+    def __init__(self, config):
+        super().__init__(config)
+        self.weight = torch.autograd.Variable(torch.ones(2, config.hidden_size),
+                                              requires_grad=True)
+        self.bias = torch.autograd.Variable(torch.ones(2), requires_grad=True)
