@@ -108,11 +108,12 @@ class Query_Resolver_Transform():
         return samples
             
 class Document_Resolver_Transform():
-    def __init__(self, get_doc_fn, **kwargs):
+    def __init__(self, get_doc_fn, fields=[('d_id','doc')], **kwargs):
         '''
         get_doc_fn: fn(d_id) -> "document string"
         '''
         self.get_doc_fn = get_doc_fn
+        self.fields = fields
     
     def __call__(self, samples):
         '''
@@ -120,7 +121,8 @@ class Document_Resolver_Transform():
         returns: [dict]: [{'doc':"document text", 'd_id':"CAR_xxx", ...}]
         '''
         for sample_obj in samples:
-            sample_obj["doc"] = self.get_doc_fn(sample_obj["d_id"])
+            for input_field, target_field in self.fields:
+                sample_obj[target_field] = self.get_doc_fn(sample_obj[input_field])
         return samples
         
 class Query_Doc_Merge_Transform():
@@ -172,7 +174,7 @@ class MonoBERT_Numericalise_Transform():
         return samples
     
 class DuoBERT_Numericalise_Transform():
-    def __init__(self, vocab_txt_file=None):
+    def __init__(self, vocab_txt_file="saved_models/duoBERT/vocab.txt"):
         self.numericalizer = BertTokenizer(vocab_txt_file)
     
     def __call__(self, samples):

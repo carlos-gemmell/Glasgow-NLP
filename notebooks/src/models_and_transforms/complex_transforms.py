@@ -6,11 +6,13 @@ from src.models_and_transforms.text_transforms import Query_Resolver_Transform, 
                                                       Query_Doc_Merge_Transform, BERT_Numericalise_Transform, \
                                                       q_id_Numericalize_Transform, d_id_Numericalize_Transform, \
                                                       MonoBERT_Numericalise_Transform, BART_Numericalise_Transform, \
-                                                      BART_Denumericalise_Transform, Rewriter_Context_Query_Merge_Transform
+                                                      BART_Denumericalise_Transform, Rewriter_Context_Query_Merge_Transform, \
+                                                      DuoBERT_Numericalise_Transform
 from src.useful_utils import chunks
 
 from tqdm.auto import tqdm 
 import torch
+from itertools import permutations 
 import random
 
 class Manual_Query_Doc_Pipe_Transform():
@@ -183,12 +185,14 @@ class monoBERT_Scorer_Transform():
         
         print(f"Loading chekcpoint from {checkpoint_dir}")
         self.BERT_Reranker = BertForPassageRanking.from_pretrained(checkpoint_dir, from_tf=True)
+        self.BERT_Reranker.classifier.weight.data = self.BERT_Reranker.weight.data
+        self.BERT_Reranker.classifier.bias.data = self.BERT_Reranker.bias.data
         self.BERT_Reranker.to(self.device)
         self.BERT_Reranker.eval()
         self.batch_size = batch_size
         self.PAD = PAD_id
         
-        print(f"BERT ReRanker initialised on {self.device}. Batch size {batch_size}")
+        print(f"MonoBERT ReRanker initialised on {self.device}. Batch size {batch_size}")
         
     def __call__(self, samples):
         '''
@@ -206,8 +210,53 @@ class monoBERT_Scorer_Transform():
                 attention_mask = (input_tensor != self.PAD).type(torch.float).to(self.device)
                 scores = self.BERT_Reranker(input_tensor, attention_mask=attention_mask, token_type_ids=type_ids)[0][:,0].tolist()
             for sample_obj, score in zip(sample_obj_batch, scores):
-                sample_obj["score"] = score
+                sample_obj["score"] = -score
                 
+        return samples
+    
+class DuoBERT_Scorer_Transform():
+    def __init__(self,checkpoint_dir="./saved_models/duoBERT/", device=None, PAD_id=0, batch_size=32):
+        '''
+        DuoBERT takes in a query and two documents and gives a scoore to the one that is most rellevant between each.
+        
+        checkpoint_path: str: path to only the state dict of the model, loaded with load_state_dict
+        '''
+        if device:
+            self.device = device
+        else:
+            self.device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
+        
+        print(f"Loading chekcpoint from {checkpoint_dir}")
+        self.duoBERT_Reranker = BertForPassageRanking.from_pretrained(checkpoint_dir, from_tf=True)
+        self.duoBERT_Reranker.classifier.weight.data = self.duoBERT_Reranker.weight.data
+        self.duoBERT_Reranker.classifier.bias.data = self.duoBERT_Reranker.bias.data
+        type_embed_weight = self.duoBERT_Reranker.bert.embeddings.token_type_embeddings.weight.data
+        self.duoBERT_Reranker.bert.embeddings.token_type_embeddings.weight.data = torch.cat((type_embed_weight, torch.zeros(1,1024)))
+        self.duoBERT_Reranker.to(self.device)
+        self.duoBERT_Reranker.eval()
+        self.batch_size = batch_size
+        self.PAD = PAD_id
+        print(f"DuoBERT ReRanker initialised on {self.device}. Batch size {batch_size}")
+    
+    def __call__(self, samples):
+        '''
+        The score given corresponds to the likelihood A is more relevant than B. So I higher score is favorrable for A.
+        
+        samples: [dict]: [{'input_ids':[34,2,8...], 'type_ids':[0,0,1,1], ...}]
+        returns: [dict]: [{'input_ids':[34,2,8...], 'type_ids':[0,0,1,1], 'score':0.95, ...}]
+        '''
+        for sample_obj_batch in chunks(samples, self.batch_size):
+            with torch.no_grad():
+                input_tensor = torch.nn.utils.rnn.pad_sequence(
+                                [torch.tensor(sample_obj["input_ids"], dtype=torch.long) for sample_obj in sample_obj_batch], 
+                                                     padding_value=self.PAD).T.to(self.device)
+                type_ids = torch.nn.utils.rnn.pad_sequence(
+                                [torch.tensor(sample_obj["type_ids"], dtype=torch.long) for sample_obj in sample_obj_batch], 
+                                                     padding_value=self.PAD).T.to(self.device)
+                attention_mask = (input_tensor != self.PAD).type(torch.float).to(self.device)
+                scores = self.duoBERT_Reranker(input_tensor, attention_mask=attention_mask, token_type_ids=type_ids)[0][:,1].tolist()
+            for sample_obj, score in zip(sample_obj_batch, scores):
+                sample_obj["score"] = score
         return samples
     
 class MonoBERT_ReRanker_Transform():
@@ -234,6 +283,48 @@ class MonoBERT_ReRanker_Transform():
             reranking_samples = self.monoBERT_score_transform(reranking_samples)
             ordered_samples = sorted(reranking_samples, key=lambda sample: sample['score'], reverse=True)
             sample_obj["reranked_results"] = [(sample['d_id'], sample['score']) for sample in ordered_samples]
+        return samples
+    
+class DuoBERT_ReRanker_Transform():
+    def __init__(self, checkpoint_dir, get_doc_fn, rerank_top=10, **kwargs):
+        '''
+        A Transform that reorders a list pairwise.
+        
+        checkpoint_path: str: path to only the state dict of the model, loaded with load_state_dict
+        '''
+        self.rerank_top = rerank_top
+        self.duoBERT_score_transform = DuoBERT_Scorer_Transform(checkpoint_dir, **kwargs)
+        self.doc_resolver_transform = Document_Resolver_Transform(get_doc_fn, fields=[('d_idA','docA'),('d_idB','docB')])
+        self.duoBERT_numericalise_transform = DuoBERT_Numericalise_Transform(**kwargs)
+        
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'query':"query text",'search_results':[("MARCO_xxx", 0.4), ("CAR_xxx",0.3)..]...}]
+        returns: [dict]: [{'query':"query text",'reranked_results':[("CAR_xxx", 0.54), ("CAR_xxx",0.27)..]...}]
+        '''
+        for sample_obj in tqdm(samples, desc="Reranking queries"):
+            query = sample_obj["query"]
+            d_ids = [d_id for d_id, score in sample_obj["search_results"]]
+            d_id_permutations = list(permutations(d_ids[:self.rerank_top], 2))
+
+            doc_permutations = [{'query':query, 'd_idA':d_idA, 'd_idB':d_idB} for d_idA, d_idB in d_id_permutations]
+            doc_permutations = self.doc_resolver_transform(doc_permutations)
+            doc_permutations = self.duoBERT_numericalise_transform(doc_permutations)
+            scored_permutations = self.duoBERT_score_transform(doc_permutations)
+            
+            d_id_scores = {}
+            for scored_perm in scored_permutations:
+                if scored_perm['d_idA'] not in d_id_scores:
+                    d_id_scores[scored_perm['d_idA']] = 0
+                if scored_perm['d_idB'] not in d_id_scores:
+                    d_id_scores[scored_perm['d_idB']] = 0
+                    
+                d_id_scores[scored_perm['d_idA']] += scored_perm['score']
+                d_id_scores[scored_perm['d_idB']] -= scored_perm['score']
+            
+            new_scored_samples = [(d_id, score) for d_id, score in d_id_scores.items()]
+            sample_obj["reranked_results"] = sorted(new_scored_samples, key=lambda score_tpl: score_tpl[1], reverse=True)
+            sample_obj["reranked_results"] += [s for s in sample_obj["search_results"] if s[0] not in d_id_scores]
         return samples
     
 class BART_Query_Rewriter_Transform():

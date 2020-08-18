@@ -6,10 +6,8 @@ from pytorch_lightning.core.lightning import LightningModule
 from transformers import BartModel, BertTokenizer, BartForConditionalGeneration
 
 from src.RawDataLoaders import MS_Marco_RawDataLoader
-from src.pipe_datasets import Manual_Query_BM25_Reranking_Dataset
 from src.models_and_transforms.text_transforms import Reranking_Sampler_Transform, q_id_Denumericalize_Transform, d_id_Denumericalize_Transform, \
                                                       BART_Denumericalise_Transform
-from src.models_and_transforms.complex_transforms import Manual_Query_Doc_Pipe_Transform
 from src.Experiments import Sequence_Similarity_Experiment
 
 class BART_Query_ReWriter(LightningModule):
