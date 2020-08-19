@@ -3,6 +3,8 @@ from transformers import BertTokenizer, BartTokenizer
 from tqdm.auto import tqdm 
 import random
 import ujson
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction import text
 
 class Reranking_Flattener_Transform():
     def __init__(self, **kwargs):
@@ -380,4 +382,52 @@ class Query_Cleaner_Transform():
                 if "?" in new_query:
                     new_query = new_query[:new_query.index('?')+1]
                 sample_obj[target_field] = new_query
+        return samples
+    
+class Relevance_Model_Transform():
+    def __init__(self, get_doc_fn, top_k=30, **kwargs):
+        '''
+        This Transform produces a list of relevant words using TF-IDF based on search result documents.
+        '''
+        self.get_doc_fn = get_doc_fn
+        self.vectorizer = TfidfVectorizer(stop_words=['english'])
+        self.top_k = top_k
+
+    
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'search_results':[("MARCO_xxx", 0.4), ("CAR_xxx",0.3)..]}]
+        returns: [dict]: [{'word_list':['foo','bar'], 'search_results':[("MARCO_xxx", 0.4), ("CAR_xxx",0.3)..]}]
+        '''
+        for sample_obj in tqdm(samples, desc="Relevance Model"):
+            word_scores = {}
+            documents = [self.get_doc_fn(d_id) for d_id, score in sample_obj['search_results']][:self.top_k]
+            self.vectorizer.fit_transform(documents)
+            all_words = self.vectorizer.get_feature_names()
+            for doc, (d_id, score) in zip(documents, sample_obj['search_results'][:self.top_k]):
+                vectorized_doc = self.vectorizer.transform([doc])
+                for word_idx in vectorized_doc.nonzero()[1]:
+                    if all_words[word_idx] in text.ENGLISH_STOP_WORDS:
+                        break
+                    if all_words[word_idx] not in word_scores:
+                        word_scores[all_words[word_idx]] = 0
+                    word_scores[all_words[word_idx]] += vectorized_doc[0, word_idx]*score
+            
+            sample_obj['word_list'] = [k for k, v in sorted(word_scores.items(), key=lambda item: item[1], reverse=True)]
+        return samples
+    
+class Simple_Query_Expansion_Transform():
+    def __init__(self, top_k=30, **kwargs):
+        '''
+        This Transform expands a query by appending a k number of a word list provided.
+        '''
+        self.top_k = top_k
+        
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'query':"query text", 'word_list':['foo','bar']}]
+        returns: [dict]: [{'expanded_query':"query text foo bar", 'word_list':['foo','bar']}]
+        '''
+        for sample_obj in samples:
+            sample_obj['expanded_query'] = sample_obj['query']+' '+ ' '.join(sample_obj['word_list'][:self.top_k])
         return samples
