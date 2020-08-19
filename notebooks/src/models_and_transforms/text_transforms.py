@@ -307,11 +307,12 @@ class d_id_Denumericalize_Transform():
         return samples
     
 class Rewriter_Query_Resolver_Transform():
-    def __init__(self, get_query_fn, **kwargs):
+    def __init__(self, get_query_fn, prev_queries_utter_type="manual_rewritten_utterance", **kwargs):
         '''
         get_query_fn: fn(q_id) -> "query string"
         '''
         self.get_query_fn = get_query_fn
+        self.prev_queries_utter_type = prev_queries_utter_type
         
     def __call__(self, samples):
         '''
@@ -320,8 +321,8 @@ class Rewriter_Query_Resolver_Transform():
         '''
         for sample_obj in samples:
             sample_obj["unresolved_query"] = self.get_query_fn(sample_obj["q_id"], utterance_type='raw_utterance')
-            resolved_previous_queries = [self.get_query_fn(q_id, utterance_type='manual_rewritten_utterance')for q_id in sample_obj["prev_turns"]]
-            sample_obj["previous_queries"] = resolved_previous_queries
+            previous_queries = [self.get_query_fn(q_id, utterance_type=self.prev_queries_utter_type)for q_id in sample_obj["prev_turns"]]
+            sample_obj["previous_queries"] = previous_queries
             sample_obj["resolved_query"] = self.get_query_fn(sample_obj["q_id"], utterance_type='manual_rewritten_utterance')
         return samples
     

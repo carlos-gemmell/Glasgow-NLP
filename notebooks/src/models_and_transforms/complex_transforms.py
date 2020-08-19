@@ -7,7 +7,7 @@ from src.models_and_transforms.text_transforms import Query_Resolver_Transform, 
                                                       q_id_Numericalize_Transform, d_id_Numericalize_Transform, \
                                                       MonoBERT_Numericalise_Transform, BART_Numericalise_Transform, \
                                                       BART_Denumericalise_Transform, Rewriter_Context_Query_Merge_Transform, \
-                                                      DuoBERT_Numericalise_Transform
+                                                      DuoBERT_Numericalise_Transform, Query_Cleaner_Transform
 from src.useful_utils import chunks
 
 from tqdm.auto import tqdm 
@@ -187,31 +187,31 @@ class monoBERT_Scorer_Transform():
         self.BERT_Reranker = BertForPassageRanking.from_pretrained(checkpoint_dir, from_tf=True)
         self.BERT_Reranker.classifier.weight.data = self.BERT_Reranker.weight.data
         self.BERT_Reranker.classifier.bias.data = self.BERT_Reranker.bias.data
-        self.BERT_Reranker.to(self.device)
         self.BERT_Reranker.eval()
+        self.BERT_Reranker.to(self.device)
         self.batch_size = batch_size
         self.PAD = PAD_id
         
-        print(f"MonoBERT ReRanker initialised on {self.device}. Batch size {batch_size}")
+        print(f"MonoBERT ReRanker initialised on device {self.device}. Batch size {batch_size}")
         
     def __call__(self, samples):
         '''
         samples: [dict]: [{'input_ids':[34,2,8...], 'type_ids':[0,0,1,1]}]
         returns: [dict]: [{'input_ids':[34,2,8...], 'type_ids':[0,0,1,1], "score":0.56}]
         '''
+        all_scores = torch.zeros((0,1), device=self.device)
         for sample_obj_batch in chunks(samples, self.batch_size):
             with torch.no_grad():
                 input_tensor = torch.nn.utils.rnn.pad_sequence(
-                                [torch.tensor(sample_obj["input_ids"], dtype=torch.long) for sample_obj in sample_obj_batch], 
-                                                     padding_value=self.PAD).T.to(self.device)
+                                [torch.tensor(sample_obj["input_ids"], dtype=torch.long, device=self.device) for sample_obj in sample_obj_batch], 
+                                                     padding_value=self.PAD).T
                 type_ids = torch.nn.utils.rnn.pad_sequence(
                                 [torch.tensor(sample_obj["type_ids"], dtype=torch.long) for sample_obj in sample_obj_batch], 
                                                      padding_value=self.PAD).T.to(self.device)
                 attention_mask = (input_tensor != self.PAD).type(torch.float).to(self.device)
-                scores = self.BERT_Reranker(input_tensor, attention_mask=attention_mask, token_type_ids=type_ids)[0][:,0].tolist()
+                scores = self.BERT_Reranker(input_tensor, attention_mask=attention_mask, token_type_ids=type_ids)[0][:,1].tolist()
             for sample_obj, score in zip(sample_obj_batch, scores):
-                sample_obj["score"] = -score
-                
+                sample_obj["score"] = score
         return samples
     
 class DuoBERT_Scorer_Transform():
@@ -254,7 +254,7 @@ class DuoBERT_Scorer_Transform():
                                 [torch.tensor(sample_obj["type_ids"], dtype=torch.long) for sample_obj in sample_obj_batch], 
                                                      padding_value=self.PAD).T.to(self.device)
                 attention_mask = (input_tensor != self.PAD).type(torch.float).to(self.device)
-                scores = self.duoBERT_Reranker(input_tensor, attention_mask=attention_mask, token_type_ids=type_ids)[0][:,1].tolist()
+                scores = outputs = self.duoBERT_Reranker(input_tensor, attention_mask=attention_mask, token_type_ids=type_ids)[0][:,1].tolist()
             for sample_obj, score in zip(sample_obj_batch, scores):
                 sample_obj["score"] = score
         return samples
@@ -328,7 +328,7 @@ class DuoBERT_ReRanker_Transform():
         return samples
     
 class BART_Query_Rewriter_Transform():
-    def __init__(self, checkpoint_path, device=None, **kwargs):
+    def __init__(self, checkpoint_path, device=None, no_tqdm=False, **kwargs):
         '''
         A Transform that re-writes unresolve queries based on previous turns.
         
@@ -338,7 +338,7 @@ class BART_Query_Rewriter_Transform():
             self.device = device
         else:
             self.device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
-            
+        self.no_tqdm = no_tqdm
         self.BART_query_rewriter = BART_Query_ReWriter(**kwargs)
         self.BART_query_rewriter.load_state_dict(torch.load(checkpoint_path, map_location=self.device))
         self.BART_query_rewriter.to(self.device)
@@ -354,11 +354,46 @@ class BART_Query_Rewriter_Transform():
         '''
         samples = self.rewriter_context_query_merge_transform(samples)
         samples = self.BART_numericalise_transform(samples)
-        for sample_obj in tqdm(samples, desc="Re-Writing queries"):
+        if self.no_tqdm:
+            pbar = samples
+        else:
+            pbar = tqdm(samples, desc="Re-Writing queries")
+        for sample_obj in pbar:
             input_ids = sample_obj["input_ids"]
             
             output_ids = self.BART_query_rewriter.generate(torch.tensor([input_ids], device=self.device), num_beams=4, max_length=512, early_stopping=True)
             single_out_ids = output_ids[0].tolist()
             sample_obj["pred_ids"] = single_out_ids
         samples = self.BART_denumericalise_transform(samples)
+        return samples
+
+class BART_Full_Conversational_Rewriter_Transform():
+    def __init__(self, checkpoint_path, **kwargs):
+        '''
+        This Transform takes a sequence of raw queries and re-writes them to the resolved version fed off itself.
+        '''
+        self.BART_query_rewriter_transform = BART_Query_Rewriter_Transform(checkpoint_path, no_tqdm=True, **kwargs)
+        self.query_cleaner_transform = Query_Cleaner_Transform(fields=[('rewritten_query','cleaned_rewritten_query')])
+        self.cached_generations = {}
+        
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'unresolved_query':"third raw query", 'previous_queries':['first raw query', 'second raw query']}]
+        returns: [dict]: [{'rewritten_query':"third raw query", 'full_rewritten_queries':['first rewritten q', 'second rewritten q', 'thir..'],...]
+        '''
+        for sample_obj in tqdm(samples, desc="BART self feeding rewrites"):
+            raw_queries = sample_obj['previous_queries'] + [sample_obj['unresolved_query']]
+            rewritten_queries = []
+            for i, raw_query in enumerate(raw_queries):
+                if tuple(raw_queries[:i+1]) in self.cached_generations:
+                    rewritten_query = self.cached_generations[tuple(raw_queries[:i+1])]
+                else:
+                    rewritten_samples = self.BART_query_rewriter_transform([{'unresolved_query':raw_query, 'previous_queries':rewritten_queries}])
+                    rewritten_sample = self.query_cleaner_transform(rewritten_samples)[0]
+                    rewritten_query = rewritten_sample['cleaned_rewritten_query']
+                    self.cached_generations[tuple(raw_queries[:i+1])] = rewritten_query
+                
+                rewritten_queries.append(rewritten_query)
+            sample_obj['full_rewritten_queries'] = rewritten_queries
+            sample_obj['rewritten_query'] = rewritten_queries[-1]
         return samples
