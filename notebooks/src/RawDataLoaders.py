@@ -55,16 +55,27 @@ class RawDataLoader(ABC):
         super().__init__()
         
 class CodeSearchNet_RawDataLoader(RawDataLoader):
-    def __init__(self, data_directory="/nfs/code_search_net_archive", language="python", random_shuffle_seed=-1):
+    def __init__(self, data_directory="./datasets/code_search_net", language="python", random_shuffle_seed=-1, max_chars=2000):
         """
         >>> from src.dataset_loaders import CodeSearchNet_RawDataLoader
         >>> codeSearchNet_data_loader = CodeSearchNet_RawDataLoader()
         >>> validation_pairs = codeSearchNet_data_loader.english_to_code_for_translation("valid")
         """
+        self.data_directory = data_directory
+        if not os.path.exists(data_directory):
+            os.makedirs(data_directory)
+        
+        collection_dir = os.path.join(data_directory, f"{language}.zip")
+        zip_file = os.path.join(data_directory, f"{language}.zip")
+        if not os.path.isfile(zip_file):
+#             download_from_url(f"https://s3.amazonaws.com/code-search-net/CodeSearchNet/v2/{language}.zip", zip_file)
+            os.system(f'unzip {zip_file} -d {data_directory}')
+        
         lang_data_dir = os.path.join(data_directory, language, "final/jsonl")
         self.train_split = jsonl_dir_to_data(os.path.join(lang_data_dir, "train")) # these are all arrays of dicts
         self.valid_split = jsonl_dir_to_data(os.path.join(lang_data_dir, "valid"))
         self.test_split = jsonl_dir_to_data(os.path.join(lang_data_dir, "test"))
+        self.max_chars = max_chars
         
         if random_shuffle_seed != -1:
             raise Exception(f'random_shuffle_seed not implemented yet')
@@ -77,55 +88,23 @@ class CodeSearchNet_RawDataLoader(RawDataLoader):
         elif split=="test":
             return self.test_split
         elif split=="all":
-            return self.train_split + self.valid_split + self.test_split
+            return self.train_split + self.valid_split
         else:
             raise Exception(f"'{split}' split not recognised.")
-    
-    def english_to_code_for_translation(self, split, size=sys.maxsize, full_docstring=False):
-        """
-        This method returns a standard format of [(source_str, target_str)] used for translation.
-        
-        split: str: "train", "valid", "test", "all"
-        """
-        data_split = self._get_split(split)
-        if full_docstring:
-            source_sents = [sample["docstring"] for sample in data_split]
-        else:
-            source_sents = [" ".join(sample["docstring_tokens"]) for sample in data_split]
-        
-        target_sents = [sample["code"].replace(sample["docstring"],"") for sample in data_split]
-        
-        translation_pairs = list(zip(source_sents,target_sents))
-        return translation_pairs[:size]
-    
-    def code_to_english_for_translation(self, split, size=sys.maxsize, full_docstring=False):
-        flipped_translation_pairs = self.english_to_code_for_translation(split, size=size, full_docstring=full_docstring)
-        translation_pairs = [(code, eng) for (eng, code) in flipped_translation_pairs]
-        return translation_pairs
-    
-    def english_to_code_for_search(self, split, size=sys.maxsize, full_docstring=False):
-        """
-        returns: ([str]*n, [str], [[int]]*n): queries, docs, mapping (q_rels) for each query (*n) 
-                                              indicating which document idx is relevant.
-        """
-        translation_pairs = self.english_to_code_for_translation(split, size=size, full_docstring=full_docstring)
-        queries = [eng for (eng, code) in translation_pairs]
-        docs = [code for (eng, code) in translation_pairs]
-        q_rels = [[i] for i in range(len(queries))]
-        
-        return queries, docs, q_rels
-    
-    def code_for_language_modeling(self, split, size=sys.maxsize, keep_docstring=False):
-        """
-        returns: [str]: an array of code samples as strings.
-        """
-        data_split = self._get_split(split)
-        if keep_docstring:
-            target_sents = [sample["code"] for sample in data_split]
-        else:
-            target_sents = [sample["code"].replace(sample["docstring"],"") for sample in data_split]
-        return target_sents[:size]
-        
+            
+    def get_samples(self, split, fields=["original_string"]):
+        '''
+        split: str: "train", "test", "valild", "all"
+        fields: [str]: ["original_string", 'code', 'code_tokens', 'docstring', 'docstring_tokens', 'repo', 'url', 'func_name', 'path']
+                       specify the fields returned in each sample
+        '''
+        samples = self._get_split(split)
+        samples = [sample_obj for sample_obj in tqdm(samples, desc=f'Filtering max chars: {self.max_chars}') if len(sample_obj['original_string'])<self.max_chars]
+        for sample_obj in tqdm(samples, desc='deleting bload fields'):
+            for key in list(sample_obj.keys()):
+                if key not in fields and fields:
+                    del sample_obj[key]
+        return samples       
         
 class CoNaLa_RawDataLoader(RawDataLoader):
     def __init__(self, data_directory="/nfs/phd_by_carlos/notebooks/datasets/CoNaLa/"):

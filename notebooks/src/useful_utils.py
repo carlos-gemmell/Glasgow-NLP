@@ -165,7 +165,7 @@ def jsonl_dir_to_data(path):
     data_samples = []
     files_list = os.listdir(path)
     files_list.sort()
-    for file_name in  tqdm.tqdm(files_list):
+    for file_name in  tqdm(files_list, desc=f"loading: {path[-10:]}"):
         file_path = os.path.join(path, file_name)
         with gzip.GzipFile(file_path, 'r') as fin:
             data = jsonlines.Reader(fin)

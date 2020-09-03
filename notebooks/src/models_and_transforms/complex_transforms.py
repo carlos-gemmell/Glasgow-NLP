@@ -55,12 +55,13 @@ class RUN_File_Search_Transform():
         return samples
     
 class BM25_Search_Transform():
-    def __init__(self, hits=100, **kwargs):
+    def __init__(self, hits=100, key_fields={'query_field':'query', 'target_field':'search_results'}, **kwargs):
         '''
         first_pass_model_fn: ("query text") -> [(d_id, score), ...]
         '''
         self.first_pass_model_fn = BM25_Ranker(**kwargs).predict
         self.hits = hits
+        self.key_fields = key_fields
         
     def __call__(self, samples):
         '''
@@ -68,9 +69,9 @@ class BM25_Search_Transform():
         returns: [dict]: [{'query':"query text", 'search_results':[("MARCO_xxx", 0.4), ("CAR_xxx",0.3)..], ...}]
         '''
         for sample_obj in tqdm(samples, desc="Searching queries"):
-            query = sample_obj["query"]
+            query = sample_obj[self.key_fields['query_field']]
             results = self.first_pass_model_fn(query, hits=self.hits)
-            sample_obj["search_results"] = results
+            sample_obj[self.key_fields['target_field']] = results
         return samples
     
 class BERT_Score_Transform():
@@ -111,7 +112,7 @@ class BERT_Score_Transform():
         return samples
     
 class BERT_ReRanker_Transform():
-    def __init__(self, checkpoint_path, get_doc_fn, **kwargs):
+    def __init__(self, checkpoint_path, get_doc_fn, key_fields={'query_field':'query', 'target_field':'search_results'}, **kwargs):
         '''
         A Transform that reorders a list based on BERT query doc score
         
@@ -121,6 +122,7 @@ class BERT_ReRanker_Transform():
         self.doc_resolver_transform = Document_Resolver_Transform(get_doc_fn)
         self.q_d_merge_transform = Query_Doc_Merge_Transform()
         self.BERT_numericalize_transform = BERT_Numericalise_Transform()
+        self.key_fields = key_fields
         
     def __call__(self, samples):
         '''
@@ -128,14 +130,14 @@ class BERT_ReRanker_Transform():
         returns: [dict]: [{'query':"query text",'reranked_results':[("CAR_xxx", 0.54), ("CAR_xxx",0.27)..]...}]
         '''
         for sample_obj in tqdm(samples, desc="Reranking queries"):
-            query = sample_obj["query"]
+            query = sample_obj[self.key_fields['query_field']]
             reranking_samples = [{'query':query, 'd_id':d_id} for d_id, score in sample_obj["search_results"]]
             reranking_samples = self.doc_resolver_transform(reranking_samples)
             reranking_samples = self.q_d_merge_transform(reranking_samples)
             reranking_samples = self.BERT_numericalize_transform(reranking_samples)
             reranking_samples = self.BERT_score_transform(reranking_samples)
             ordered_samples = sorted(reranking_samples, key=lambda sample: sample['score'], reverse=True)
-            sample_obj["reranked_results"] = [(sample['d_id'], sample['score']) for sample in ordered_samples]
+            sample_obj[self.key_fields['target_field']] = [(sample['d_id'], sample['score']) for sample in ordered_samples]
         return samples
     
 class Oracle_ReRanker_Transform():
@@ -260,7 +262,7 @@ class DuoBERT_Scorer_Transform():
         return samples
     
 class MonoBERT_ReRanker_Transform():
-    def __init__(self, checkpoint_dir, get_doc_fn, **kwargs):
+    def __init__(self, checkpoint_dir, get_doc_fn, key_fields={'query_field':'query', 'target_field':'search_results'}, **kwargs):
         '''
         A Transform that reorders a list based on BERT query doc score
         
@@ -269,6 +271,7 @@ class MonoBERT_ReRanker_Transform():
         self.monoBERT_score_transform = monoBERT_Scorer_Transform(checkpoint_dir, **kwargs)
         self.doc_resolver_transform = Document_Resolver_Transform(get_doc_fn)
         self.monoBERT_numericalise_transform = MonoBERT_Numericalise_Transform(**kwargs)
+        self.key_fields = key_fields
         
     def __call__(self, samples):
         '''
@@ -276,13 +279,13 @@ class MonoBERT_ReRanker_Transform():
         returns: [dict]: [{'query':"query text",'reranked_results':[("CAR_xxx", 0.54), ("CAR_xxx",0.27)..]...}]
         '''
         for sample_obj in tqdm(samples, desc="Reranking queries"):
-            query = sample_obj["query"]
+            query = sample_obj[self.key_fields['query_field']]
             reranking_samples = [{'query':query, 'd_id':d_id} for d_id, score in sample_obj["search_results"]]
             reranking_samples = self.doc_resolver_transform(reranking_samples)
             reranking_samples = self.monoBERT_numericalise_transform(reranking_samples)
             reranking_samples = self.monoBERT_score_transform(reranking_samples)
             ordered_samples = sorted(reranking_samples, key=lambda sample: sample['score'], reverse=True)
-            sample_obj["reranked_results"] = [(sample['d_id'], sample['score']) for sample in ordered_samples]
+            sample_obj[self.key_fields['target_field']] = [(sample['d_id'], sample['score']) for sample in ordered_samples]
         return samples
     
 class DuoBERT_ReRanker_Transform():
@@ -397,3 +400,4 @@ class BART_Full_Conversational_Rewriter_Transform():
             sample_obj['full_rewritten_queries'] = rewritten_queries
             sample_obj['rewritten_query'] = rewritten_queries[-1]
         return samples
+    

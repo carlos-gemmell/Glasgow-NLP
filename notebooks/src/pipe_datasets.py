@@ -1,7 +1,5 @@
-from src.models_and_transforms.text_transforms import Query_Resolver_Transform, Reranking_Sampler_Transform, Reranking_Flattener_Transform, \
-                                                      Rewriter_Query_Resolver_Transform, Rewriter_Context_Query_Merge_Transform, \
-                                                      BART_Numericalise_Transform, Rewriter_Context_Target_Transform
-from src.models_and_transforms.complex_transforms import BM25_Search_Transform, Manual_Query_Doc_Pipe_Transform, RUN_File_Search_Transform
+from src.models_and_transforms.text_transforms import *
+from src.models_and_transforms.complex_transforms import *
 from src.RawDataLoaders import MS_Marco_RawDataLoader
 
 from transformers import BartTokenizer
@@ -172,6 +170,40 @@ class CAsT_Query_ReWriting_Dataset(Pipe_Dataset):
         self.PAD = BartTokenizer.from_pretrained('facebook/bart-large').pad_token_id
         
     
+    def collate(self, input_samples):
+        """
+        input_samples: [dict]: these are samples obtained through the __getitem__ method
+        """
+        collated_samples = {}
+        collated_samples["input_ids"] = torch.nn.utils.rnn.pad_sequence([torch.tensor(sample["input_ids"], dtype=torch.long) for sample in input_samples], 
+                                                 padding_value=self.PAD, batch_first=True)
+        
+        collated_samples["input_attention_mask"] = (collated_samples["input_ids"] != self.PAD).type(torch.float)
+        collated_samples["decoder_input_ids"] = torch.nn.utils.rnn.pad_sequence([torch.tensor(sample["target_ids"][:-1], dtype=torch.long) for sample in input_samples], padding_value=self.PAD, batch_first=True)
+        collated_samples["decoder_target_ids"] = torch.nn.utils.rnn.pad_sequence([torch.tensor(sample["target_ids"][1:], dtype=torch.long) for sample in input_samples], padding_value=self.PAD, batch_first=True)
+        collated_samples["target_attention_mask"] = (collated_samples["decoder_input_ids"] != self.PAD).type(torch.float)
+        
+        return collated_samples
+    
+    
+class BART_Span_Prediction_dataset(Pipe_Dataset):
+    def __init__(self, samples, **kwargs):
+        '''
+        samples [dict]: [{'original_string':"this is the original sttring used for language modelling"]
+        '''
+        slow_pipe = []
+        fast_pipe = [
+            BART_Corrupt_Augmentation_Live_Transform(corruption_types={"span_deletion":{'min_tokens':1,
+                                                                                       'max_tokens':10, 
+                                                                                       'deletion_ratio':0.15}},
+                                                     fields={"input_seq":"code", "augmented_seq":"corrupted_string"},
+                                                     display_bar=False),
+            BART_Numericalise_Transform(fields=[('corrupted_string', 'input_ids'), ('code', 'target_ids')])
+        ]
+        
+        super().__init__(samples, slow_pipe, fast_pipe, **kwargs)
+        self.PAD = BartTokenizer.from_pretrained('facebook/bart-large').pad_token_id
+        
     def collate(self, input_samples):
         """
         input_samples: [dict]: these are samples obtained through the __getitem__ method

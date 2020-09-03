@@ -159,6 +159,8 @@ class Ranking_Experiment():
                 pytrec_run[q_id][d_id] = score
         
         results = self.evaluator.evaluate(pytrec_run)
+        for sample_obj, result in zip(samples, results.values()):
+            sample_obj.update(result)
         aggregate = self.dict_mean(list(results.values()))
         return aggregate
     

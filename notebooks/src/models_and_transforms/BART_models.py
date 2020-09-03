@@ -10,12 +10,11 @@ from src.models_and_transforms.text_transforms import Reranking_Sampler_Transfor
                                                       BART_Denumericalise_Transform
 from src.Experiments import Sequence_Similarity_Experiment
 
-class BART_Query_ReWriter(LightningModule):
+class BART_Simple(LightningModule):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.BART = BartForConditionalGeneration.from_pretrained('facebook/bart-large-cnn')
 
-        
     def forward(self, encoder_input, decoder_input):
         outputs = self.BART(input_ids, decoder_input_ids=decoder_input)
         return outputs
@@ -43,6 +42,18 @@ class BART_Query_ReWriter(LightningModule):
             
         return {"loss":loss, 'logits':logits}
     
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.parameters(), lr=0.000001)
+    
+    def backward(self, use_amp, loss, optimizer, _):
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.parameters(), 0.5)
+        
+    def generate(self, *args,**kwargs):
+        return self.BART.generate(*args,**kwargs)
+    
+    
+class BART_Query_ReWriter(BART_Simple):
     def validation_step(self, batch, batch_idx):
         encoder_input = batch["input_ids"]
         input_mask = batch['input_attention_mask']
@@ -86,12 +97,3 @@ class BART_Query_ReWriter(LightningModule):
             print("------------------")
         return {'val_loss':metrics["BLEU"], 'log':metrics}
             
-    def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=0.000001)
-    
-    def backward(self, use_amp, loss, optimizer, _):
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.parameters(), 0.5)
-        
-    def generate(self, *args,**kwargs):
-        return self.BART.generate(*args,**kwargs)

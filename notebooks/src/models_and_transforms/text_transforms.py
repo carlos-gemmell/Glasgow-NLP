@@ -3,6 +3,7 @@ from transformers import BertTokenizer, BartTokenizer
 from tqdm.auto import tqdm 
 import random
 import ujson
+import re 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.feature_extraction import text
 
@@ -176,7 +177,7 @@ class MonoBERT_Numericalise_Transform():
         return samples
     
 class DuoBERT_Numericalise_Transform():
-    def __init__(self, vocab_txt_file="saved_models/duoBERT/vocab.txt"):
+    def __init__(self, vocab_txt_file="saved_models/duoBERT/vocab.txt", **kwargs):
         self.numericalizer = BertTokenizer(vocab_txt_file)
     
     def __call__(self, samples):
@@ -372,7 +373,7 @@ class Query_Cleaner_Transform():
         
     def __call__(self, samples):
         '''
-        samples: [dict]: [{'query':"query: query text? what else?!"}]
+        samples: [dict]: [{'query':"query: query text? what else?!", 'unresolved_query':'query text?'}]
         returns: [dict]: [{'cleaned_query':"query text?", 'query':"query: query text? what else?!"}]
         '''
         for sample_obj in samples:
@@ -381,6 +382,15 @@ class Query_Cleaner_Transform():
                 new_query = query.split("query:")[-1]
                 if "?" in new_query:
                     new_query = new_query[:new_query.index('?')+1]
+                # keep the same amount of sentences as the unresolved query
+                split_unres_query = re.sub(r'(\?|\.)', '\\1[cut]',  sample_obj['unresolved_query'][:])
+                unres_query_sents = list(filter(None, split_unres_query.split('[cut]')))
+                num_unres_query_sents = len(unres_query_sents)
+                
+                split_query = re.sub(r'(\?|\.)', '\\1[cut]',  new_query[:])
+                unres_query_sents = list(filter(None, split_query.split('[cut]')))
+                new_query = ''.join(unres_query_sents[:num_unres_query_sents])
+                
                 sample_obj[target_field] = new_query
         return samples
     
@@ -390,14 +400,14 @@ class Relevance_Model_Transform():
         This Transform produces a list of relevant words using TF-IDF based on search result documents.
         '''
         self.get_doc_fn = get_doc_fn
-        self.vectorizer = TfidfVectorizer(stop_words=['english'])
+        self.vectorizer = TfidfVectorizer()
         self.top_k = top_k
 
     
     def __call__(self, samples):
         '''
         samples: [dict]: [{'search_results':[("MARCO_xxx", 0.4), ("CAR_xxx",0.3)..]}]
-        returns: [dict]: [{'word_list':['foo','bar'], 'search_results':[("MARCO_xxx", 0.4), ("CAR_xxx",0.3)..]}]
+        returns: [dict]: [{'word_list':[('foo',6.4),('bar',5.2)], 'search_results':[("MARCO_xxx", 0.4), ("CAR_xxx",0.3)..]}]
         '''
         for sample_obj in tqdm(samples, desc="Relevance Model"):
             word_scores = {}
@@ -407,13 +417,12 @@ class Relevance_Model_Transform():
             for doc, (d_id, score) in zip(documents, sample_obj['search_results'][:self.top_k]):
                 vectorized_doc = self.vectorizer.transform([doc])
                 for word_idx in vectorized_doc.nonzero()[1]:
-                    if all_words[word_idx] in text.ENGLISH_STOP_WORDS:
-                        break
-                    if all_words[word_idx] not in word_scores:
-                        word_scores[all_words[word_idx]] = 0
-                    word_scores[all_words[word_idx]] += vectorized_doc[0, word_idx]*score
+                    if all_words[word_idx] not in text.ENGLISH_STOP_WORDS:
+                        if all_words[word_idx] not in word_scores:
+                            word_scores[all_words[word_idx]] = 0
+                        word_scores[all_words[word_idx]] += vectorized_doc[0, word_idx]*score
             
-            sample_obj['word_list'] = [k for k, v in sorted(word_scores.items(), key=lambda item: item[1], reverse=True)]
+            sample_obj['word_list'] = [(word, score) for word, score in sorted(word_scores.items(), key=lambda item: item[1], reverse=True)]
         return samples
     
 class Simple_Query_Expansion_Transform():
@@ -425,9 +434,56 @@ class Simple_Query_Expansion_Transform():
         
     def __call__(self, samples):
         '''
-        samples: [dict]: [{'query':"query text", 'word_list':['foo','bar']}]
-        returns: [dict]: [{'expanded_query':"query text foo bar", 'word_list':['foo','bar']}]
+        samples: [dict]: [{'query':"query text", 'word_list':[('foo',6.4),('bar',5.2)]}]
+        returns: [dict]: [{'expanded_query':"query text foo bar", 'word_list':[('foo',6.4),('bar',5.2)]}]
         '''
         for sample_obj in samples:
-            sample_obj['expanded_query'] = sample_obj['query']+' '+ ' '.join(sample_obj['word_list'][:self.top_k])
+            word_list = [word for word, score in sample_obj['word_list']]
+            sample_obj['expanded_query'] = sample_obj['query']+' '+ ' '.join(word_list[:self.top_k])
+        return samples
+    
+    
+class BART_Corrupt_Augmentation_Live_Transform():
+    def __init__(self, corruption_types={"span_deletion":{'min_tokens':1,'max_tokens':10, 'deletion_ratio':0.15}}, 
+                 fields={"input_seq":"input_seq", "augmented_seq":"augmented_seq"}, display_bar=True):
+        '''
+        This Transform is a step in data augmentation to produce input/output pairs for a BART style model.
+        It is a live model and as such returns the same number of samples and passed in despite the data augmentation.
+        Operations for augmentation are sampled from the corruption_fields, and perform random subsamples from their parameters.
+        
+        corruption_types: dict: {"span_del":{"min..."}}
+            - "span_deletion": {'min_tokens':1,'max_tokens':10, 'deletion_ratio':0.15}: remove chunks from the input for rerconstruction at a rate.
+        '''
+        self.corruption_types = corruption_types
+        self.fields = fields
+        self.display_bar = display_bar
+        
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'input_seq':"input text or array"}]
+        samples: [dict]: [{'input_seq':"input text or array", 'augmented_seq':"inp text or ay"}]
+        '''
+        if self.display_bar:
+            pbar = tqdm(samples, desc="Corrupting samples")
+        else:
+            pbar = samples
+        for sample_obj in pbar:
+            corruption_type = random.choice(list(self.corruption_types.keys()))
+            if corruption_type == "span_deletion":
+                min_tokens = self.corruption_types[corruption_type]['min_tokens']
+                max_tokens = self.corruption_types[corruption_type]['max_tokens']
+                deletion_ratio = self.corruption_types[corruption_type]['deletion_ratio']
+                
+                original_seq = sample_obj[self.fields["input_seq"]]
+                deletion_mask = [False]*len(original_seq)
+                while deletion_mask.count(True)/len(original_seq) < deletion_ratio:
+                    span_start = random.randint(0,len(original_seq))
+                    span_length = random.randint(min_tokens,max_tokens)
+                    deletion_mask[span_start: span_start+span_length] = [True]*len(deletion_mask[span_start: span_start+span_length])
+                
+                # deep copy so the original is unaffected
+                sample_obj[self.fields["augmented_seq"]] = [tok for tok, deleted in zip(original_seq, deletion_mask) if not deleted]
+                if isinstance(original_seq, str):
+                    sample_obj[self.fields["augmented_seq"]] = ''.join(sample_obj[self.fields["augmented_seq"]])
+                
         return samples
