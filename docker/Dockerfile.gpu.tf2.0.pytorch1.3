@@ -27,10 +27,10 @@ RUN pip install tensorflow-gpu==2.0.0-rc1 tensorflow_datasets
 RUN pip install torch torchvision
 RUN pip install jupyter jupyterlab tokenizer
 RUN pip install torchtext pytorch-nlp nltk line_profiler runipy dotmap transformers matplotlib
-RUN pip install transformers==3.0.1 pytorch_lightning
+RUN pip install transformers pytorch_lightning ray tabulate ujson colored
 RUN pip install torch==1.3.1 --upgrade
 RUN pip install jsonlines tree-sitter anytree pyformlang autopep8
-RUN pip install pyserini
+RUN pip install pyserini pytrec_eval_git
 
 # for tranX
 RUN pip install records xgboost babel
