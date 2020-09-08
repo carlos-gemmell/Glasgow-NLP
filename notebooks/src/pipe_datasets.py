@@ -48,9 +48,9 @@ class Pipe_Dataset(Dataset):
                                                  padding_value=self.PAD)
         return collated_samples
     
-    def to_dataloader(self, batch_size, num_workers=0, shuffle=False):
+    def to_dataloader(self, batch_size, num_workers=0, shuffle=False, pin_memory=False):
         dataloader = DataLoader(self, batch_size=batch_size, num_workers=num_workers,\
-                           drop_last=False, collate_fn = self.collate, shuffle=shuffle)
+                           drop_last=False, collate_fn = self.collate, shuffle=shuffle, pin_memory=pin_memory)
         dataloader.__code__ = 0
         return dataloader
     

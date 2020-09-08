@@ -1,5 +1,4 @@
 from datetime import datetime
-from torchtext.data import Field, BucketIterator
 import re
 import random
 import os

@@ -1,8 +1,6 @@
 from .file_ops import corpus_to_array
 from .useful_utils import filter_corpus, clean_samples, string_split_v3, jsonl_dir_to_data, download_from_url
 
-from torchtext.data import Field, BucketIterator
-import torchtext
 from dotmap import DotMap
 import numpy as np
 import random
