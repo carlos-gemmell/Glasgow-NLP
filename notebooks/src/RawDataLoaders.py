@@ -1,5 +1,6 @@
 from .file_ops import corpus_to_array
 from .useful_utils import filter_corpus, clean_samples, string_split_v3, jsonl_dir_to_data, download_from_url
+from .models_and_transforms.text_transforms import Rename_Transform
 
 from dotmap import DotMap
 import numpy as np
@@ -66,7 +67,7 @@ class CodeSearchNet_RawDataLoader(RawDataLoader):
         collection_dir = os.path.join(data_directory, f"{language}.zip")
         zip_file = os.path.join(data_directory, f"{language}.zip")
         if not os.path.isfile(zip_file):
-#             download_from_url(f"https://s3.amazonaws.com/code-search-net/CodeSearchNet/v2/{language}.zip", zip_file)
+            download_from_url(f"https://s3.amazonaws.com/code-search-net/CodeSearchNet/v2/{language}.zip", zip_file)
             os.system(f'unzip {zip_file} -d {data_directory}')
         
         lang_data_dir = os.path.join(data_directory, language, "final/jsonl")
@@ -114,6 +115,11 @@ class CoNaLa_RawDataLoader(RawDataLoader):
             self.valid_data = self.full_train_data[int(len(self.full_train_data)*0.9):]
         with open(os.path.join(data_directory, "conala-test.json")) as train_f:
             self.test_data = json.load(train_f)
+        if not os.path.isfile(os.path.join(data_directory, 'GPT3/GPT3_CoNaLa_mined_solid_state_501784_no_probs.json')):
+            download_from_url(f"https://storage.googleapis.com/carlos-phd-data/GPT3_CoNaLa_mined_solid_state_501784_no_probs.json",
+                              os.path.join(data_directory, 'GPT3/GPT3_CoNaLa_mined_solid_state_501784_no_probs.json'))
+        with open(os.path.join(data_directory, 'GPT3/GPT3_CoNaLa_mined_solid_state_501784_no_probs.json')) as mined_f:
+            self.mined_samples = json.load(mined_f)
             
     def _get_split(self, split):
         if split == "train":
@@ -124,25 +130,30 @@ class CoNaLa_RawDataLoader(RawDataLoader):
             return  self.test_data
         elif split == "all":
             return self.full_train_data
+        elif split == "mined_GPT3":
+            return Rename_Transform(fields=[('code', 'snippet'), ('GPT3_pred_desc','rewritten_intent')])(self.mined_samples[:])
         else:
             raise Exception(f"'{split}' split not recognised.")
             
-    def english_to_code_for_translation(self, split):
+    def get_samples(self, split, max_char_len=600, min_char_len=3):
         """
-        This method returns a standard format of [(source_str, target_str)] used for translation.
+        This method returns parallel samples of English and Code for the CoNaLa dataset.
         split: str: "train", "valid", "test", "all"
+        
+        returns: [dict]: [{'description':"desc text", 'code': "code text"}]
         """
         data_split = self._get_split(split)
-        pairs = []
+        samples = []
         for sample in data_split:
             if "rewritten_intent" in sample and "snippet" in sample:
                 desc = sample["rewritten_intent"] if sample["rewritten_intent"] != None else sample["intent"]
                 code = sample["snippet"]
-                pairs.append((desc, code))
-        return pairs
+                if min_char_len<len(desc)<max_char_len and min_char_len<len(code)<max_char_len:
+                    samples.append({'description':desc, 'code':code})
+        return samples
     
 class Django_RawDataLoader(RawDataLoader):
-    def __init__(self, data_directory="/nfs/phd_by_carlos/notebooks/datasets/django/", **kwargs):
+    def __init__(self, data_directory="/nfs/phd_by_carlos/notebooks/datasets/django_folds/", **kwargs):
         self.data_directory = data_directory
         
         def get_lines(path):
@@ -151,12 +162,12 @@ class Django_RawDataLoader(RawDataLoader):
                 for line in f.readlines():
                     lines.append(line.strip())
             return lines
-        train_src = get_lines(os.path.join(data_directory, f"train.anno"))
-        train_tgt = get_lines(os.path.join(data_directory, f"train.code"))
-        valid_src = get_lines(os.path.join(data_directory, f"dev.anno"))
-        valid_tgt = get_lines(os.path.join(data_directory, f"dev.code"))
-        test_src = get_lines(os.path.join(data_directory, f"test.anno"))
-        test_tgt = get_lines(os.path.join(data_directory, f"test.code"))
+        train_src = get_lines(os.path.join(data_directory, f"django.fold1-10.train.src"))
+        train_tgt = get_lines(os.path.join(data_directory, f"django.fold1-10.train.tgt"))
+        valid_src = get_lines(os.path.join(data_directory, f"django.fold1-10.valid.src"))
+        valid_tgt = get_lines(os.path.join(data_directory, f"django.fold1-10.valid.tgt"))
+        test_src = get_lines(os.path.join(data_directory, f"django.fold1-10.test.src"))
+        test_tgt = get_lines(os.path.join(data_directory, f"django.fold1-10.test.tgt"))
         
         self.train_pairs = list(zip(train_src, train_tgt))
         self.valid_pairs = list(zip(valid_src, valid_tgt))
@@ -173,14 +184,19 @@ class Django_RawDataLoader(RawDataLoader):
             return self.train_pairs + self.valid_pairs
         else:
             raise Exception(f"'{split}' split not recognised.")
-            
-    def english_to_code_for_translation(self, split):
+    
+    def get_samples(self, split):
         """
-        This method returns a standard format of [(source_str, target_str)] used for translation.
+        This method returns parallel samples of English and Code for the Django dataset.
         split: str: "train", "valid", "test", "all"
+        
+        returns: [dict]: [{'description':"desc text", 'code': "code text"}]
         """
         data_split = self._get_split(split)
-        return data_split
+        samples = []
+        for desc, code in data_split:
+            samples.append({'description':desc, 'code':code})
+        return samples
     
     
 class Parseable_Django_RawDataLoader(Django_RawDataLoader):

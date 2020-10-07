@@ -1,13 +1,8 @@
 from src.models_and_transforms.BM25_models import BM25_Ranker
 from src.models_and_transforms.BERT_models import BERT_Reranker, BertForPassageRanking
-from src.models_and_transforms.BART_models import BART_Query_ReWriter
+from src.models_and_transforms.BART_models import BART_Query_ReWriter, BART_Simple
 from src.models_and_transforms.run_file_models import Run_File_Searcher
-from src.models_and_transforms.text_transforms import Query_Resolver_Transform, Document_Resolver_Transform, \
-                                                      Query_Doc_Merge_Transform, BERT_Numericalise_Transform, \
-                                                      q_id_Numericalize_Transform, d_id_Numericalize_Transform, \
-                                                      MonoBERT_Numericalise_Transform, BART_Numericalise_Transform, \
-                                                      BART_Denumericalise_Transform, Rewriter_Context_Query_Merge_Transform, \
-                                                      DuoBERT_Numericalise_Transform, Query_Cleaner_Transform
+from src.models_and_transforms.text_transforms import *
 from src.useful_utils import chunks
 
 from tqdm.auto import tqdm 
@@ -335,7 +330,7 @@ class BART_Query_Rewriter_Transform():
         '''
         A Transform that re-writes unresolve queries based on previous turns.
         
-        checkpoint_path: str: path to only the state dict of the model, loaded with load_state_dict
+        checkpoint_path: str: path to only the **state dict** of the model, loaded with load_state_dict
         '''
         if device:
             self.device = device
@@ -401,3 +396,50 @@ class BART_Full_Conversational_Rewriter_Transform():
             sample_obj['rewritten_query'] = rewritten_queries[-1]
         return samples
     
+class BART_Conditional_Generator_Transform():
+    def __init__(self, model_or_path, device=None, show_tqdm=True, numericaliser="BART", denumericaliser='BART', **kwargs):
+        '''
+        A Transform that generates a token sequence given another sequence. It uses the BART tokenizer for input and output.
+        
+        model_or_path: str or pytorch module: path to a Pytorch Lightning checkpoint: {'state_dict':...} or a model class
+        '''
+        if device:
+            self.device = device
+        else:
+            if isinstance(model_or_path, str):
+                self.device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
+            else:
+                self.device = model_or_path.device
+            print(f"Running model on {self.device}")
+        self.show_tqdm = show_tqdm
+        if isinstance(model_or_path, str):
+            self.BART_conditional_generator = BART_Simple(**kwargs)
+            ckpt = torch.load(model_or_path, map_location=self.device)
+            self.BART_conditional_generator.load_state_dict(ckpt['state_dict'])
+        else:
+            self.BART_conditional_generator = model_or_path
+        self.BART_conditional_generator.to(self.device)
+        self.BART_conditional_generator.eval()
+        self.BART_numericalise_transform = Numericalise_Transform(numericaliser=numericaliser, fields=[('input_text','input_ids')], **kwargs)
+        self.BART_denumericalise_transform = Denumericalise_Transform(denumericaliser=denumericaliser, fields=[('pred_ids','pred_text')], **kwargs)
+        
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'input_text':'text to condition on'}]
+        returns: [dict]: [{'input_text':'text to condition on', 'pred_text':"text from BARTs decoder"}]
+        '''
+        samples = self.BART_numericalise_transform(samples)
+        if self.show_tqdm:
+            pbar = tqdm(samples, desc="BART is thinking:")
+        else:
+            pbar = samples
+        for sample_obj in pbar:
+            input_ids = sample_obj["input_ids"]
+            input_tensor = torch.tensor([input_ids], device=self.device)
+            output_ids = self.BART_conditional_generator.generate(input_tensor, num_beams=4, max_length=512, early_stopping=True)
+            single_out_ids = output_ids[0].tolist()
+            sample_obj["pred_ids"] = single_out_ids
+            del input_tensor
+            del output_ids
+        samples = self.BART_denumericalise_transform(samples)
+        return samples

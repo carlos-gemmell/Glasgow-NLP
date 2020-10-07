@@ -1,14 +1,17 @@
 from src.models_and_transforms.text_transforms import *
 from src.models_and_transforms.complex_transforms import *
 from src.RawDataLoaders import MS_Marco_RawDataLoader
+from src.useful_utils import chunks
 
 from transformers import BartTokenizer
 from tqdm.auto import tqdm 
 from torch.utils.data import Dataset, DataLoader
 import torch
+import numpy as np
+import random
 
 class Pipe_Dataset(Dataset):
-    def __init__(self, samples, slow_pipe, real_time_pipe, **kwargs):
+    def __init__(self, samples, slow_pipe, real_time_pipe, valid_sample_fn=None, sort_key_fn=None, batch_bucket_size=1, shuffle=False, **kwargs):
         
         self.real_time_pipe = real_time_pipe
         self.PAD = 0
@@ -19,12 +22,39 @@ class Pipe_Dataset(Dataset):
             samples = transform(samples)
         self.samples = samples
         
+        if sort_key_fn:
+            assert batch_bucket_size < len(self.samples), 'Bucket size too large'
+            flag_not_valid = []
+            items_keys = []
+            for i in tqdm(range(len(self.samples)), desc='pre-sort processing'):
+                sample = self.__getitem__(i)
+                if valid_sample_fn:
+                    if valid_sample_fn(sample) == False:
+                        flag_not_valid.append(i)
+                items_keys.append(sort_key_fn(sample))
+            sort_idxs = np.argsort(items_keys)[::-1]
+            sort_idxs = [idx for idx in sort_idxs if idx not in flag_not_valid]
+            idx_chunks = list(chunks(sort_idxs, batch_bucket_size))
+            first_idx_batch_largest = idx_chunks[0]
+            even_chunks = idx_chunks[1:-1]
+            last_chunk = idx_chunks[-1]
+            if shuffle:
+                random.shuffle(even_chunks)
+            bucketed_idxs = list(first_idx_batch_largest) + [item for sublist in even_chunks for item in sublist] + list(last_chunk)
+            self.samples = [self.samples[i] for i in bucketed_idxs]
+        
         super().__init__()
     
     def __len__(self):
         return len(self.samples)
     
     def __getitem__(self, idx):
+        if isinstance( idx, slice ):
+            samples = self.samples[idx]
+            for transform in self.real_time_pipe:
+                samples = transform(samples)
+            return samples
+        
         if idx >= len(self):
             raise IndexError
         
@@ -152,9 +182,29 @@ class MARCO_Manual_Query_BM25_Reranking_Dataset(Manual_Query_BM25_Reranking_Data
                          hits=neg_hit_depth, 
                          num_neg_samples=neg_hit_samples, 
                          index_dir="datasets/MS_MARCO/MARCO_anserini")
+    
+
+class BART_Pipe_Dataset(Pipe_Dataset):
+    def __init__(self, samples, slow_pipe, real_time_pipe, **kwargs):
+        super().__init__(samples, slow_pipe, real_time_pipe, **kwargs)
+        self.PAD = BartTokenizer.from_pretrained('facebook/bart-large').pad_token_id
+    
+    def collate(self, input_samples):
+        """
+        input_samples: [dict]: these are samples obtained through the __getitem__ method
+        """
+        collated_samples = {}
+        collated_samples["input_ids"] = torch.nn.utils.rnn.pad_sequence([torch.tensor(sample["input_ids"], dtype=torch.long) for sample in input_samples], 
+                                                 padding_value=self.PAD, batch_first=True)
         
+        collated_samples["input_attention_mask"] = (collated_samples["input_ids"] != self.PAD).type(torch.float)
+        collated_samples["decoder_input_ids"] = torch.nn.utils.rnn.pad_sequence([torch.tensor(sample["target_ids"][:-1], dtype=torch.long) for sample in input_samples], padding_value=self.PAD, batch_first=True)
+        collated_samples["decoder_target_ids"] = torch.nn.utils.rnn.pad_sequence([torch.tensor(sample["target_ids"][1:], dtype=torch.long) for sample in input_samples], padding_value=self.PAD, batch_first=True)
+        collated_samples["target_attention_mask"] = (collated_samples["decoder_input_ids"] != self.PAD).type(torch.float)
         
-class CAsT_Query_ReWriting_Dataset(Pipe_Dataset):
+        return collated_samples
+
+class CAsT_Query_ReWriting_Dataset(BART_Pipe_Dataset):
     def __init__(self, samples, get_query_fn, **kwargs):
         '''
         samples [dict]: [{'q_id':"32_4", 'prev_turns':["32_3",..]},...]
@@ -168,25 +218,9 @@ class CAsT_Query_ReWriting_Dataset(Pipe_Dataset):
         
         super().__init__(samples, slow_pipe, fast_pipe, **kwargs)
         self.PAD = BartTokenizer.from_pretrained('facebook/bart-large').pad_token_id
-        
-    
-    def collate(self, input_samples):
-        """
-        input_samples: [dict]: these are samples obtained through the __getitem__ method
-        """
-        collated_samples = {}
-        collated_samples["input_ids"] = torch.nn.utils.rnn.pad_sequence([torch.tensor(sample["input_ids"], dtype=torch.long) for sample in input_samples], 
-                                                 padding_value=self.PAD, batch_first=True)
-        
-        collated_samples["input_attention_mask"] = (collated_samples["input_ids"] != self.PAD).type(torch.float)
-        collated_samples["decoder_input_ids"] = torch.nn.utils.rnn.pad_sequence([torch.tensor(sample["target_ids"][:-1], dtype=torch.long) for sample in input_samples], padding_value=self.PAD, batch_first=True)
-        collated_samples["decoder_target_ids"] = torch.nn.utils.rnn.pad_sequence([torch.tensor(sample["target_ids"][1:], dtype=torch.long) for sample in input_samples], padding_value=self.PAD, batch_first=True)
-        collated_samples["target_attention_mask"] = (collated_samples["decoder_input_ids"] != self.PAD).type(torch.float)
-        
-        return collated_samples
     
     
-class BART_Span_Prediction_dataset(Pipe_Dataset):
+class BART_Corrupted_Span_Prediction_Dataset(BART_Pipe_Dataset):
     def __init__(self, samples, **kwargs):
         '''
         samples [dict]: [{'original_string':"this is the original sttring used for language modelling"]
@@ -198,23 +232,8 @@ class BART_Span_Prediction_dataset(Pipe_Dataset):
                                                                                        'deletion_ratio':0.15}},
                                                      fields={"input_seq":"code", "augmented_seq":"corrupted_string"},
                                                      display_bar=False),
-            BART_Numericalise_Transform(fields=[('corrupted_string', 'input_ids'), ('code', 'target_ids')])
+            Numericalise_Transform(numericaliser='BART', fields=[('corrupted_string', 'input_ids'), ('code', 'target_ids')])
         ]
-        
         super().__init__(samples, slow_pipe, fast_pipe, **kwargs)
-        self.PAD = BartTokenizer.from_pretrained('facebook/bart-large').pad_token_id
         
-    def collate(self, input_samples):
-        """
-        input_samples: [dict]: these are samples obtained through the __getitem__ method
-        """
-        collated_samples = {}
-        collated_samples["input_ids"] = torch.nn.utils.rnn.pad_sequence([torch.tensor(sample["input_ids"], dtype=torch.long) for sample in input_samples], 
-                                                 padding_value=self.PAD, batch_first=True)
-        
-        collated_samples["input_attention_mask"] = (collated_samples["input_ids"] != self.PAD).type(torch.float)
-        collated_samples["decoder_input_ids"] = torch.nn.utils.rnn.pad_sequence([torch.tensor(sample["target_ids"][:-1], dtype=torch.long) for sample in input_samples], padding_value=self.PAD, batch_first=True)
-        collated_samples["decoder_target_ids"] = torch.nn.utils.rnn.pad_sequence([torch.tensor(sample["target_ids"][1:], dtype=torch.long) for sample in input_samples], padding_value=self.PAD, batch_first=True)
-        collated_samples["target_attention_mask"] = (collated_samples["decoder_input_ids"] != self.PAD).type(torch.float)
-        
-        return collated_samples
+    

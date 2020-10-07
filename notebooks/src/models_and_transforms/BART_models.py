@@ -7,13 +7,17 @@ from transformers import BartModel, BertTokenizer, BartForConditionalGeneration
 
 from src.RawDataLoaders import MS_Marco_RawDataLoader
 from src.models_and_transforms.text_transforms import Reranking_Sampler_Transform, q_id_Denumericalize_Transform, d_id_Denumericalize_Transform, \
-                                                      BART_Denumericalise_Transform
-from src.Experiments import Sequence_Similarity_Experiment
+                                                      Denumericalise_Transform
+from src.Experiments import Sequence_BLEU_Experiment
 
 class BART_Simple(LightningModule):
-    def __init__(self, **kwargs):
+    def __init__(self, from_pretrained=True, config=None, **kwargs):
         super().__init__(**kwargs)
-        self.BART = BartForConditionalGeneration.from_pretrained('facebook/bart-large-cnn')
+        self.lr = 0.0001
+        if from_pretrained or not config:
+            self.BART = BartForConditionalGeneration.from_pretrained('facebook/bart-large-cnn')
+        else:
+            self.BART = BartForConditionalGeneration(config)
 
     def forward(self, encoder_input, decoder_input):
         outputs = self.BART(input_ids, decoder_input_ids=decoder_input)
@@ -43,7 +47,33 @@ class BART_Simple(LightningModule):
         return {"loss":loss, 'logits':logits}
     
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=0.000001)
+        optimizers = [torch.optim.Adam(self.parameters(), lr=self.lr)]
+        schedulers = [
+              {
+                 'scheduler': ReduceLROnPlateau(optimizers[0], ...),
+                 'monitor': 'val_recall', # Default: val_loss
+                 'interval': 'epoch',
+                 'frequency': 1
+              },
+              LambdaLR(optimizers[1], ...)
+           ]
+        return optim,
+    
+    def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_i, second_order_closure, using_native_amp):
+        # warm up lr
+        # warm up for 500 steps
+#         if self.trainer.global_step < 500:
+#             lr_scale = min(1., float(self.trainer.global_step + 1) / 500.)
+#             for pg in optimizer.param_groups:
+#                 pg['lr'] = lr_scale * self.lr
+
+        # update params
+        optimizer.step()
+#         optimizer.zero_grad()
+    
+    def optimizer_zero_grad(self, epoch, batch_idx, optimizer, optimizer_idx):        
+        for param in self.parameters():
+            param.grad = None
     
     def backward(self, use_amp, loss, optimizer, _):
         loss.backward()
@@ -74,7 +104,7 @@ class BART_Query_ReWriter(BART_Simple):
                 sample_obj["target_ids"] = batch['decoder_target_ids'][i].tolist()
                 samples.append(sample_obj)
             
-        denumericalize_transform = BART_Denumericalise_Transform(fields=[('generated_ids','predicted_seq'),
+        denumericalize_transform = Denumericalise_Transform(fields=[('generated_ids','predicted_seq'),
                                                                        ('input_ids', 'input_text'),
                                                                        ('target_ids', 'target_seq')])
         samples = denumericalize_transform(samples)
@@ -85,7 +115,7 @@ class BART_Query_ReWriter(BART_Simple):
                 sample_obj["predicted_seq"] = query_elements[-1]
             else:
                 sample_obj["predicted_seq"] = query_elements[0]
-        experiment = Sequence_Similarity_Experiment()
+        experiment = Sequence_BLEU_Experiment()
         metrics = experiment(samples)
         print(metrics)
         for i in range(3):

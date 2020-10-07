@@ -7,8 +7,9 @@ import sys
 from .useful_utils import string_split_v3, string_split_v1, chunks
 import pytrec_eval
 import json
+import re
 from tqdm.auto import tqdm 
-from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
+from .bleu_score import compute_bleu
 
 class Experiment(ABC):
     def __init__(self, task_data):
@@ -164,32 +165,50 @@ class Ranking_Experiment():
         aggregate = self.dict_mean(list(results.values()))
         return aggregate
     
-class Sequence_Similarity_Experiment():
-    def __init__(self, save_name="sequence_outputs.txt"):
+class Sequence_BLEU_Experiment():
+    def __init__(self, fields={}, debug=True):
         '''
         An Experiment to evaluate sequence similarity through metrics like: BLEU or token accuracy.
         '''
+        self.fields = {'predicted_seq':'predicted_seq', 'target_seq':'target_seq'}
+        self.debug = debug
+        self.fields.update(fields)
     
     def __call__(self, samples):
-        '''
-        samples: [dict]: [{'target_seq':"taget text", 'predicted_seq':"pred text"},...]
-        '''
-        
-        samples = self.__transform__(samples)
-        BLEU = np.average([s["BLEU"] for s in samples])
-        return {"BLEU":BLEU}
-    
-    def __transform__(self, samples):
         '''
         samples: [dict]: [{'target_seq':"taget text", 'predicted_seq':"pred text"},...]
         returns: [dict]: [{'target_seq':"taget text", 'predicted_seq':"pred text", "BELU":0.6},...]
         '''
         for sample_obj in samples:
-            ngram_weights = [0.25] * min(4, len(sample_obj['target_seq']))
-            sample_obj["BLEU"] = sentence_bleu([sample_obj['target_seq']], sample_obj['predicted_seq'], weights=ngram_weights, 
-                          smoothing_function=SmoothingFunction().method3)
+            pred_tokens = self.tokenize_for_bleu_eval(sample_obj[self.fields['predicted_seq']])
+            refrence_tokens = self.tokenize_for_bleu_eval(sample_obj[self.fields['target_seq']])
+            if pred_tokens==[]:
+                pred_tokens = ['']
+            sample_obj["unsmoothed_official_BLEU"] = compute_bleu([refrence_tokens], pred_tokens, smooth=False)[0]
+            sample_obj["nltk_BLEU"] = nltk_bleu(refrence_tokens, pred_tokens)
+            
+        if self.debug:
+            unsmoothed_official_BLEU = np.average([s["unsmoothed_official_BLEU"] for s in samples])
+            nltk_BLEU = np.average([s["nltk_BLEU"] for s in samples])
+            print(f'unsmoothed_official_BLEU: {unsmoothed_official_BLEU}')
+            print(f'nltk_BLEU: {nltk_BLEU}')
+        
         return samples
     
+    def tokenize_for_bleu_eval(self, code):
+        """ 
+        The tokenizer that we use for code submissions, from Wang Ling et al., Latent Predictor Networks for Code Generation (2016)
+        @param code: string containing a code snippet
+        @return: list of code tokens
+        """
+        code = re.sub(r'([^A-Za-z0-9_])', r' \1 ', code)
+        code = re.sub(r'([a-z])([A-Z])', r'\1 \2', code)
+        code = re.sub(r'\s+', ' ', code)
+        code = code.replace('"', '`')
+        code = code.replace('\'', '`')
+        tokens = [t for t in code.split(' ') if t]
+
+        return tokens
     
 class RUN_File_Transform_Exporter():
     def __init__(self, run_file_path, model_name='model_by_carlos'):

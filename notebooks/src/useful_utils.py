@@ -11,7 +11,52 @@ import numpy as np
 from  heapq import heappush, heappop, nsmallest
 from anytree import Node, RenderTree, NodeMixin, find_by_attr
 from tqdm.auto import tqdm  
-    
+from pytorch_lightning import Callback, EvalResult
+
+class Validate_and_Save_Callback(Callback):
+    def __init__(self, filepath, prefix='', validate_fn=None, interval=0.5, monitor=None):
+        '''
+        This is a callback to validate and save a model on a % interval from a pytorch lightning module.
+        Given a validation function it will run and save the result while logging to the pl logger.
+        If validate_fn is None, the checkpoint will be saved regardless
+        
+        >>> validate_fn = lambda model: return {'val_bleu':0.4, 'val_acc':0.35}
+        >>> saving_cb = Validate_and_Save_Callback(filepath='model/path/', prefix='my_model', validate_fn=validate_fn, epoch_save_interval=0.05)
+        >>> trainer = Trainer(gpus=[1], callbacks=[saving_cb])
+        >>> trainer.fit(model, train_dataloader)
+        '''
+        self.interval = interval
+        self.validate_fn = validate_fn
+        self.next_save_batch_idx = 0
+        self.filepath = filepath
+        self.prefix = prefix
+        
+        self.prev_best = 0
+        self.monitor = monitor
+        
+        if not os.path.exists(filepath):
+            os.makedirs(filepath)
+        
+    def on_batch_end(self, trainer, pl_module):
+        if trainer.limit_train_batches:
+            total_steps = len(trainer.train_dataloader) * trainer.limit_train_batches
+        else: 
+            total_steps = len(trainer.train_dataloader)
+        
+        if trainer.global_step % int(total_steps*self.interval) == 0:
+            val_dict = {}
+            monitor_label = ''
+            if self.validate_fn:
+                val_dict = self.validate_fn(trainer.get_model())
+                trainer.logger.log_metrics(val_dict, step=trainer.global_step)
+                monitor_label = f'_{val_dict[self.monitor]:.5f}'
+                
+            filepath=os.path.join(self.filepath, f"{self.prefix}{monitor_label}_step_{trainer.global_step}.ckpt")
+            if self.monitor:
+                if val_dict[self.monitor] < self.prev_best:
+                    return
+                self.prev_best = val_dict[self.monitor]
+            trainer.save_checkpoint(filepath)
 
 def download_from_url(url, dst):
     """

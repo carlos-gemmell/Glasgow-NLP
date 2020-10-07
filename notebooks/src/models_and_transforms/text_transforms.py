@@ -1,11 +1,16 @@
 import copy
 from transformers import BertTokenizer, BartTokenizer
+from tokenizers import processors, Tokenizer
+from src.useful_utils import download_from_url
 from tqdm.auto import tqdm 
 import random
 import ujson
 import re 
+import os
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.feature_extraction import text
+import ray
+# ray.init(ignore_reinit_error=True)
 
 class Reranking_Flattener_Transform():
     def __init__(self, **kwargs):
@@ -140,19 +145,6 @@ class Query_Doc_Merge_Transform():
         for sample_obj in samples:
             sample_obj["input_text"] = sample_obj["query"] + " [SEP] " + sample_obj["doc"]
         return samples
-
-class BERT_Numericalise_Transform():
-    def __init__(self):
-        self.numericalizer = BertTokenizer.from_pretrained('bert-base-uncased')
-    
-    def __call__(self, samples):
-        '''
-        sample_obj: [dict]: [{'input_text':"text and more", ...}]
-        returns: [dict]: [{'input_ids':[34,2,8...], 'input_text':"text and more", ...}]
-        '''
-        for sample_obj in samples:
-            sample_obj["input_ids"] = self.numericalizer.encode(sample_obj["input_text"], truncation=True)
-        return samples
     
 class MonoBERT_Numericalise_Transform():
     def __init__(self, vocab_txt_file="saved_models/monoBERT/vocab.txt", **kwargs):
@@ -202,9 +194,64 @@ class DuoBERT_Numericalise_Transform():
             sample_obj["type_ids"] = query_token_type_ids+docA_token_type_ids+docB_token_type_ids
         return samples
     
-class BART_Numericalise_Transform():
-    def __init__(self, fields=[("input_text","input_ids")]):
-        self.numericalizer = BartTokenizer.from_pretrained('facebook/bart-large')
+class Numericalise_Transform():
+    def __init__(self, numericaliser='BART', fields=[("input_text","input_ids")], use_ray=False, **kwargs):
+        if numericaliser == 'BART':
+            self.numericaliser = BartTokenizer.from_pretrained('facebook/bart-large').encode
+        elif numericaliser == 'BERT':
+            self.numericaliser = BertTokenizer.from_pretrained('bert-base-uncased').encode
+        elif numericaliser == 'Code32k':
+            if not os.path.isfile("datasets/code_search_net/codeBPE.tokenizer.json"):
+                download_from_url("https://storage.googleapis.com/carlos-phd-data/code-search-net-tokenizer/codeBPE.tokenizer.json", 
+                                  "datasets/code_search_net/codeBPE.tokenizer.json")
+            code_BPE_tokenizer = Tokenizer.from_file("datasets/code_search_net/codeBPE.tokenizer.json")
+            self.custom_tokenizer = code_BPE_tokenizer
+            self.numericaliser = self.custom_tokenizer2ids
+        else:
+            self.numericaliser = numericaliser
+        print(f"Numericaliser. Ex: 'This is a test' -> {self.numericaliser('This is a test')}")
+        self.fields = fields
+        self.use_ray = use_ray
+    
+    def __call__(self, samples):
+        '''
+        sample_obj: [dict]: [{'input_text':"text and more", ...}]
+        returns: [dict]: [{'input_ids':[34,2,8...], 'input_text':"text and more", ...}]
+        '''
+        if self.use_ray:
+            self_ref = ray.put(self)
+            return ray.get([BART_Numericalise_Transform.process_sample.remote(self_ref, sample_obj) for sample_obj in tqdm(samples, desc='BART numericalising with Ray')])
+        else:
+            for sample_obj in samples:
+                for str_field, id_field in self.fields:
+                    sample_obj[id_field] = self.numericaliser(sample_obj[str_field])
+            return samples
+    
+    @ray.remote(num_cpus=1)
+    def process_sample(self, sample_obj):
+        for str_field, id_field in self.fields:
+            sample_obj[id_field] = self.numericaliser(sample_obj[str_field])
+        return sample_obj
+    
+    def custom_tokenizer2ids(self, s):
+        
+        return self.custom_tokenizer.encode(s).ids
+    
+class Denumericalise_Transform():
+    def __init__(self, denumericaliser='BART', fields=[("input_text","input_ids")], **kwargs):
+        if denumericaliser == 'BART':
+            self.denumericaliser = BartTokenizer.from_pretrained('facebook/bart-large').decode
+        elif denumericaliser == 'BERT':
+            self.denumericaliser = BertTokenizer.from_pretrained('bert-base-uncased').decode
+        elif denumericaliser == 'Code32k':
+            if not os.path.isfile("datasets/code_search_net/codeBPE.tokenizer.json"):
+                download_from_url("https://storage.googleapis.com/carlos-phd-data/code-search-net-tokenizer/codeBPE.tokenizer.json", 
+                                  "datasets/code_search_net/codeBPE.tokenizer.json")
+            code_BPE_tokenizer = Tokenizer.from_file("datasets/code_search_net/codeBPE.tokenizer.json")
+            self.denumericaliser = code_BPE_tokenizer.decode
+        else:
+            self.denumericaliser = denumericaliser
+        print(f"Denumericaliser. Ex: [0,1,2,3,4,5,6,7,8,9] -> {self.denumericaliser([0,1,2,3,4,5,6,7,8,9])}")
         self.fields = fields
     
     def __call__(self, samples):
@@ -214,37 +261,7 @@ class BART_Numericalise_Transform():
         '''
         for sample_obj in samples:
             for str_field, id_field in self.fields:
-                sample_obj[id_field] = self.numericalizer.encode(sample_obj[str_field])
-        return samples
-
-class BERT_Denumericalise_Transform():
-    def __init__(self, fields=[("input_ids","input_text")]):
-        self.numericalizer = BertTokenizer.from_pretrained('bert-base-uncased')
-        self.fields = fields
-    
-    def __call__(self, samples):
-        '''
-        sample_obj: [dict]: [{'input_ids':[34,2,8...], ...}]
-        returns: [dict]: [{'input_ids':[34,2,8...], 'input_text':"text and more", ...}]
-        '''
-        for sample_obj in samples:
-            for str_field, id_field in self.fields:
-                sample_obj[id_field] = self.numericalizer.decode(sample_obj[str_field])
-        return samples
-
-class BART_Denumericalise_Transform():
-    def __init__(self, fields=[("input_ids","input_text")]):
-        self.numericalizer = BartTokenizer.from_pretrained('facebook/bart-large')
-        self.fields = fields
-    
-    def __call__(self, samples):
-        '''
-        sample_obj: [dict]: [{'input_ids':[34,2,8...], ...}]
-        returns: [dict]: [{'input_ids':[34,2,8...], 'input_text':"text and more", ...}]
-        '''
-        for sample_obj in samples:
-            for str_field, id_field in self.fields:
-                sample_obj[id_field] = self.numericalizer.decode(sample_obj[str_field],skip_special_tokens=True)
+                sample_obj[id_field] = self.denumericaliser(sample_obj[str_field])
         return samples
     
 class q_id_Numericalize_Transform():
@@ -310,10 +327,18 @@ class d_id_Denumericalize_Transform():
         return samples
     
 class Rewriter_Query_Resolver_Transform():
-    def __init__(self, get_query_fn, prev_queries_utter_type="manual_rewritten_utterance", **kwargs):
+    def __init__(self, get_query_fn, prev_queries_utter_type="manual_rewritten_utterance", fields={}, **kwargs):
         '''
         get_query_fn: fn(q_id) -> "query string"
         '''
+        self.fields = {
+            'q_id_field':'q_id',
+            'prev_turns_field':'prev_turns',
+            'unresolved_query_field':'unresolved_query',
+            'previous_queries_field':'previous_queries',
+            'resolved_query_field':'resolved_query'
+        }
+        self.fields.update(fields)
         self.get_query_fn = get_query_fn
         self.prev_queries_utter_type = prev_queries_utter_type
         
@@ -323,10 +348,10 @@ class Rewriter_Query_Resolver_Transform():
         returns: [dict]: [{'unresolved_query':'query text', 'resolved_query':'query text', 'previous_queries':['first query text', 'second query text']}]
         '''
         for sample_obj in samples:
-            sample_obj["unresolved_query"] = self.get_query_fn(sample_obj["q_id"], utterance_type='raw_utterance')
-            previous_queries = [self.get_query_fn(q_id, utterance_type=self.prev_queries_utter_type)for q_id in sample_obj["prev_turns"]]
-            sample_obj["previous_queries"] = previous_queries
-            sample_obj["resolved_query"] = self.get_query_fn(sample_obj["q_id"], utterance_type='manual_rewritten_utterance')
+            sample_obj[self.fields["unresolved_query_field"]] = self.get_query_fn(sample_obj[self.fields["q_id_field"]], utterance_type='raw_utterance')
+            previous_queries = [self.get_query_fn(q_id, utterance_type=self.prev_queries_utter_type)for q_id in sample_obj[self.fields["prev_turns_field"]]]
+            sample_obj[self.fields["previous_queries_field"]] = previous_queries
+            sample_obj[self.fields["resolved_query_field"]] = self.get_query_fn(sample_obj[self.fields["q_id_field"]], utterance_type='manual_rewritten_utterance')
         return samples
     
 class Rewriter_Context_Query_Merge_Transform():
@@ -486,4 +511,74 @@ class BART_Corrupt_Augmentation_Live_Transform():
                 if isinstance(original_seq, str):
                     sample_obj[self.fields["augmented_seq"]] = ''.join(sample_obj[self.fields["augmented_seq"]])
                 
+        return samples
+    
+class Code_Sample_Augmentation_Transform():
+    def __init__(self):
+        '''
+        This Transform performs data augmentation on the input code 
+        by extracting valid (compiled with ast) sub sections of the program as new samples.
+        '''
+        pass
+    
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'code': 'if a:\n    print(a)'}...]
+        samples: [dict]: [{'code': 'if a:\n    print(a)'}, {'code': 'print(a)'},...]
+        '''
+#         for sample_obj in tqdm(samples, desc='Augmenting code by sub-sample'):
+        self_ref = ray.put(self)
+        expanded_samples = ray.get([Code_Sample_Augmentation_Transform.process_sample.remote(self_ref, sample_obj) for sample_obj in tqdm(samples, desc='Augmenting code with Ray cores')])
+        flatten = lambda l: [item for sublist in l for item in sublist]
+        return flatten(expanded_samples)
+    
+    @ray.remote(num_cpus=0.5)
+    def process_sample(self, sample_obj):
+        new_samples = []
+        new_samples.append(sample_obj)
+        code_str = sample_obj['code']
+        for separate_lines in self.allSubArrays(code_str.splitlines(keepends=True)):
+            code = self.unindent_paragraph(''.join(separate_lines)).strip()
+            try:
+                if not code:
+                    continue
+                ast.parse(code)
+                new_sample = {}
+                new_sample.update(sample_obj)
+                new_sample['code'] = code
+                new_samples.append(new_sample)
+            except:
+                pass
+        return new_samples
+    
+    def allSubArrays(self, xs):
+        n = len(xs)
+        indices = list(range(n+1))
+        for i,j in itertools.combinations(indices,2):
+            yield xs[i:j]
+    def unindent_paragraph(self, para_string):
+        lines = para_string.splitlines(keepends=True)
+        starting_spaces = len(lines[0]) - len(lines[0].lstrip())
+        return ''.join([l[starting_spaces:] for l in lines])
+
+class Rename_Transform():
+    def __init__(self, fields=[]):  
+        '''
+        This is a stateless function transform that renames fields already existing in a sequence of samples to new names.
+        Fields can be set to None to delete them.
+        fields: [('fieldA', 'fieldB')]
+        '''
+        self.fields = fields
+        
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'fieldA': 'foo bar'}...]
+        retrns: [dict]: [{'fieldB': 'foo bar'}...]
+        '''
+        for sample_obj in samples:
+            for src_field, tgt_field in self.fields:
+                if tgt_field == None:
+                    sample_obj.pop(src_field)
+                else:
+                    sample_obj[tgt_field] = sample_obj.pop(src_field)
         return samples
