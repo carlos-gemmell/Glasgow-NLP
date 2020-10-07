@@ -49,20 +49,20 @@ spec:
         deploymentconfig: pythonMLNotebookGPU
     spec:
       nodeSelector:
-        # node-role.ida/gputitan: "true"
-        node-role.ida/gpu2080ti: "true"
+        node-role.ida/gputitan: "true"
+        # node-role.ida/gpu2080ti: "true"
       containers:
       - name: deepo-ml-plus
-        image: aquaktus/docker_ml_by_carlos:v8
+        image: aquaktus/docker_ml_by_carlos:v11
         resources:
           requests:
             cpu: "1500m"
-            memory: "16Gi"
-            nvidia.com/gpu: 0 # this allows you to access all GPUs at the same time
+            memory: "64Gi"
+            nvidia.com/gpu: 1 # this allows you to access all GPUs at the same time
           limits:
             cpu: "16000m"
-            memory: "32Gi"
-            nvidia.com/gpu: 0 # this allows you to access all GPUs at the same time
+            memory: "128Gi"
+            nvidia.com/gpu: 1 # this allows you to access all GPUs at the same time
         command:
           - 'jupyter-lab'
         args:
