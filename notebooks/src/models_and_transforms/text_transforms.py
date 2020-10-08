@@ -195,7 +195,7 @@ class DuoBERT_Numericalise_Transform():
         return samples
     
 class Numericalise_Transform():
-    def __init__(self, numericaliser='BART', fields=[("input_text","input_ids")], use_ray=False, **kwargs):
+    def __init__(self, numericaliser='BART', fields=[("input_text","input_ids")], use_ray=False, debug=True, **kwargs):
         if numericaliser == 'BART':
             self.numericaliser = BartTokenizer.from_pretrained('facebook/bart-large').encode
         elif numericaliser == 'BERT':
@@ -209,7 +209,8 @@ class Numericalise_Transform():
             self.numericaliser = self.custom_tokenizer2ids
         else:
             self.numericaliser = numericaliser
-        print(f"Numericaliser. Ex: 'This is a test' -> {self.numericaliser('This is a test')}")
+        if debug:
+            print(f"Numericaliser. Ex: 'This is a test' -> {self.numericaliser('This is a test')}")
         self.fields = fields
         self.use_ray = use_ray
     
@@ -220,7 +221,7 @@ class Numericalise_Transform():
         '''
         if self.use_ray:
             self_ref = ray.put(self)
-            return ray.get([BART_Numericalise_Transform.process_sample.remote(self_ref, sample_obj) for sample_obj in tqdm(samples, desc='BART numericalising with Ray')])
+            return ray.get([BART_Numericalise_Transform.process_sample.remote(self_ref, sample_obj) for sample_obj in tqdm(samples, desc='BART numericalising with Ray', leave=False)])
         else:
             for sample_obj in samples:
                 for str_field, id_field in self.fields:
@@ -238,7 +239,7 @@ class Numericalise_Transform():
         return self.custom_tokenizer.encode(s).ids
     
 class Denumericalise_Transform():
-    def __init__(self, denumericaliser='BART', fields=[("input_text","input_ids")], **kwargs):
+    def __init__(self, denumericaliser='BART', fields=[("input_text","input_ids")], debug=True, **kwargs):
         if denumericaliser == 'BART':
             self.denumericaliser = BartTokenizer.from_pretrained('facebook/bart-large').decode
         elif denumericaliser == 'BERT':
@@ -251,7 +252,8 @@ class Denumericalise_Transform():
             self.denumericaliser = code_BPE_tokenizer.decode
         else:
             self.denumericaliser = denumericaliser
-        print(f"Denumericaliser. Ex: [0,1,2,3,4,5,6,7,8,9] -> {self.denumericaliser([0,1,2,3,4,5,6,7,8,9])}")
+        if debug:
+            print(f"Denumericaliser. Ex: [0,1,2,3,4,5,6,7,8,9] -> {self.denumericaliser([0,1,2,3,4,5,6,7,8,9])}")
         self.fields = fields
     
     def __call__(self, samples):

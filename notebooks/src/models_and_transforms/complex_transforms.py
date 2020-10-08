@@ -397,12 +397,13 @@ class BART_Full_Conversational_Rewriter_Transform():
         return samples
     
 class BART_Conditional_Generator_Transform():
-    def __init__(self, model_or_path, device=None, show_tqdm=True, numericaliser="BART", denumericaliser='BART', **kwargs):
+    def __init__(self, model_or_path, device=None, show_tqdm=True, numericaliser="BART", denumericaliser='BART', chunk_size=8, pad_id=1, **kwargs):
         '''
         A Transform that generates a token sequence given another sequence. It uses the BART tokenizer for input and output.
         
         model_or_path: str or pytorch module: path to a Pytorch Lightning checkpoint: {'state_dict':...} or a model class
         '''
+        self.chunk_size = chunk_size
         if device:
             self.device = device
         else:
@@ -413,14 +414,16 @@ class BART_Conditional_Generator_Transform():
             print(f"Running model on {self.device}")
         self.show_tqdm = show_tqdm
         if isinstance(model_or_path, str):
-            self.BART_conditional_generator = BART_Simple(**kwargs)
             ckpt = torch.load(model_or_path, map_location=self.device)
+            config = ckpt['config']
+            self.BART_conditional_generator = BART_Simple(config=config,**kwargs)
             self.BART_conditional_generator.load_state_dict(ckpt['state_dict'])
         else:
             self.BART_conditional_generator = model_or_path
         self.BART_conditional_generator.to(self.device)
         self.BART_conditional_generator.eval()
         self.BART_numericalise_transform = Numericalise_Transform(numericaliser=numericaliser, fields=[('input_text','input_ids')], **kwargs)
+        self.PAD = pad_id
         self.BART_denumericalise_transform = Denumericalise_Transform(denumericaliser=denumericaliser, fields=[('pred_ids','pred_text')], **kwargs)
         
     def __call__(self, samples):
@@ -430,16 +433,20 @@ class BART_Conditional_Generator_Transform():
         '''
         samples = self.BART_numericalise_transform(samples)
         if self.show_tqdm:
-            pbar = tqdm(samples, desc="BART is thinking:")
+            pbar = tqdm(list(chunks(samples,self.chunk_size)), desc="BART is thinking:")
         else:
             pbar = samples
-        for sample_obj in pbar:
-            input_ids = sample_obj["input_ids"]
-            input_tensor = torch.tensor([input_ids], device=self.device)
-            output_ids = self.BART_conditional_generator.generate(input_tensor, num_beams=4, max_length=512, early_stopping=True)
-            single_out_ids = output_ids[0].tolist()
-            sample_obj["pred_ids"] = single_out_ids
+        for chunk in pbar:
+            input_tensor = torch.nn.utils.rnn.pad_sequence(
+                                [torch.tensor(sample_obj["input_ids"], dtype=torch.long) for sample_obj in chunk], 
+                                                     padding_value=self.PAD).T.to(self.device)
+            attention_mask = (input_tensor != self.PAD).type(torch.float).to(self.device)
+            output_ids = self.BART_conditional_generator.generate(input_tensor, attention_mask=attention_mask, pad_token_id=self.PAD, num_beams=4, max_length=512, early_stopping=False)
+            for i in range(len(chunk)):
+                single_out_ids = output_ids[i].tolist()
+                chunk[i]["pred_ids"] = single_out_ids
             del input_tensor
+            del attention_mask
             del output_ids
         samples = self.BART_denumericalise_transform(samples)
         return samples

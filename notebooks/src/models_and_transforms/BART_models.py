@@ -12,12 +12,14 @@ from src.Experiments import Sequence_BLEU_Experiment
 
 class BART_Simple(LightningModule):
     def __init__(self, from_pretrained=True, config=None, **kwargs):
-        super().__init__(**kwargs)
+        super().__init__()
         self.lr = 0.0001
-        if from_pretrained or not config:
-            self.BART = BartForConditionalGeneration.from_pretrained('facebook/bart-large-cnn')
-        else:
+        if from_pretrained==False or config:
             self.BART = BartForConditionalGeneration(config)
+            # this is to make the random model favour generating the EOS token at the start to not go generating forever
+            self.BART.final_logits_bias[0][2]=5.0
+        else:
+            self.BART = BartForConditionalGeneration.from_pretrained('facebook/bart-large-cnn')
 
     def forward(self, encoder_input, decoder_input):
         outputs = self.BART(input_ids, decoder_input_ids=decoder_input)
@@ -47,17 +49,9 @@ class BART_Simple(LightningModule):
         return {"loss":loss, 'logits':logits}
     
     def configure_optimizers(self):
-        optimizers = [torch.optim.Adam(self.parameters(), lr=self.lr)]
-        schedulers = [
-              {
-                 'scheduler': ReduceLROnPlateau(optimizers[0], ...),
-                 'monitor': 'val_recall', # Default: val_loss
-                 'interval': 'epoch',
-                 'frequency': 1
-              },
-              LambdaLR(optimizers[1], ...)
-           ]
-        return optim,
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.8)
+        return [optimizer], [scheduler]
     
     def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_i, second_order_closure, using_native_amp):
         # warm up lr
