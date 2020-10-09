@@ -13,7 +13,7 @@ from src.Experiments import Sequence_BLEU_Experiment
 class BART_Simple(LightningModule):
     def __init__(self, from_pretrained=True, config=None, **kwargs):
         super().__init__()
-        self.lr = 0.0001
+        self.lr = 0.000007
         if from_pretrained==False or config:
             self.BART = BartForConditionalGeneration(config)
             # this is to make the random model favour generating the EOS token at the start to not go generating forever
@@ -50,7 +50,7 @@ class BART_Simple(LightningModule):
     
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.8)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.85)
         return [optimizer], [scheduler]
     
     def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_i, second_order_closure, using_native_amp):
