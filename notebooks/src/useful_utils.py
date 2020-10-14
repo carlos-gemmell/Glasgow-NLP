@@ -14,11 +14,16 @@ from tqdm.auto import tqdm
 from pytorch_lightning import Callback, EvalResult
 
 class Validate_and_Save_Callback(Callback):
-    def __init__(self, filepath, prefix='', validate_fn=None, interval=0.5, monitor=None):
+    def __init__(self, filepath, prefix='', validate_fn=None, interval=0.5, monitor=None, skip_epochs=[]):
         '''
         This is a callback to validate and save a model on a % interval from a pytorch lightning module.
         Given a validation function it will run and save the result while logging to the pl logger.
         If validate_fn is None, the checkpoint will be saved regardless
+        
+        validate_fn: fn(model) -> {'metic':0.4...}: a function that given a model calculates all the necessary scores for validation and model info
+        interval: float: the fraction of the data that is passed at which an evaluation is performed
+        monitor: str: the metric resulting from the validation_fn dict to check and save
+        skip_epochs: [int]: a list of the epochs to skip evaluation for. Useful at the start since model is randomly initialised.
         
         >>> validate_fn = lambda model: return {'val_bleu':0.4, 'val_acc':0.35}
         >>> saving_cb = Validate_and_Save_Callback(filepath='model/path/', prefix='my_model', validate_fn=validate_fn, epoch_save_interval=0.05)
@@ -30,9 +35,11 @@ class Validate_and_Save_Callback(Callback):
         self.next_save_batch_idx = 0
         self.filepath = filepath
         self.prefix = prefix
+        self.skip_epochs = skip_epochs
         
         self.prev_best = 0
         self.monitor = monitor
+        self.first_valid_complete = False
         
         if not os.path.exists(filepath):
             os.makedirs(filepath)
@@ -43,7 +50,8 @@ class Validate_and_Save_Callback(Callback):
         else: 
             total_steps = len(trainer.train_dataloader)
         
-        if trainer.global_step % int(total_steps*self.interval) == 0:
+        if (trainer.global_step % int(total_steps*self.interval) == 0 and trainer.current_epoch not in self.skip_epochs) or not self.first_valid_complete:
+            self.first_valid_complete = True
             val_dict = {}
             monitor_label = ''
             if self.validate_fn:

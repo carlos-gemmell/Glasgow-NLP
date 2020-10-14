@@ -475,7 +475,7 @@ class BART_Corrupt_Augmentation_Live_Transform():
                  fields={"input_seq":"input_seq", "augmented_seq":"augmented_seq"}, display_bar=True):
         '''
         This Transform is a step in data augmentation to produce input/output pairs for a BART style model.
-        It is a live model and as such returns the same number of samples and passed in despite the data augmentation.
+        It is a live transform and as such returns the same number of samples and passed in despite the data augmentation.
         Operations for augmentation are sampled from the corruption_fields, and perform random subsamples from their parameters.
         
         corruption_types: dict: {"span_del":{"min..."}}
