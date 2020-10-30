@@ -13,7 +13,7 @@ from src.Experiments import Sequence_BLEU_Experiment
 class BART_Simple(LightningModule):
     def __init__(self, from_pretrained=True, config=None, **kwargs):
         super().__init__()
-        self.lr = 0.000007
+        self.lr = 0.00005
         if from_pretrained==False or config:
             self.BART = BartForConditionalGeneration(config)
             # this is to make the random model favour generating the EOS token at the start to not go generating forever
@@ -56,8 +56,8 @@ class BART_Simple(LightningModule):
     def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_i, second_order_closure, using_native_amp):
         # warm up lr
         # warm up for 500 steps
-        if self.trainer.global_step < 1000:
-            lr_scale = min(1., float(self.trainer.global_step + 1) / 1000.)
+        if self.trainer.global_step < 500:
+            lr_scale = min(1., float(self.trainer.global_step + 1) / 500.)
             for pg in optimizer.param_groups:
                 pg['lr'] = lr_scale * self.lr
 

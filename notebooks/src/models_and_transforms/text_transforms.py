@@ -239,7 +239,7 @@ class Numericalise_Transform():
         return self.custom_tokenizer.encode(s).ids
     
 class Denumericalise_Transform():
-    def __init__(self, denumericaliser='BART', fields=[("input_text","input_ids")], debug=True, **kwargs):
+    def __init__(self, denumericaliser='BART', fields=[("input_ids","input_text")], debug=True, skip_special_tokens=True, **kwargs):
         if denumericaliser == 'BART':
             self.denumericaliser = BartTokenizer.from_pretrained('facebook/bart-large').decode
         elif denumericaliser == 'BERT':
@@ -255,15 +255,16 @@ class Denumericalise_Transform():
         if debug:
             print(f"Denumericaliser. Ex: [0,1,2,3,4,5,6,7,8,9] -> {self.denumericaliser([0,1,2,3,4,5,6,7,8,9])}")
         self.fields = fields
+        self.skip_special_tokens = skip_special_tokens
     
     def __call__(self, samples):
         '''
-        sample_obj: [dict]: [{'input_text':"text and more", ...}]
+        sample_obj: [dict]: [{'input_ids':[34,2,8...],...}]
         returns: [dict]: [{'input_ids':[34,2,8...], 'input_text':"text and more", ...}]
         '''
         for sample_obj in samples:
             for str_field, id_field in self.fields:
-                sample_obj[id_field] = self.denumericaliser(sample_obj[str_field])
+                sample_obj[id_field] = self.denumericaliser(sample_obj[str_field], skip_special_tokens=self.skip_special_tokens)
         return samples
     
 class q_id_Numericalize_Transform():
@@ -471,8 +472,8 @@ class Simple_Query_Expansion_Transform():
     
     
 class BART_Corrupt_Augmentation_Live_Transform():
-    def __init__(self, corruption_types={"span_deletion":{'min_tokens':1,'max_tokens':10, 'deletion_ratio':0.15}}, 
-                 fields={"input_seq":"input_seq", "augmented_seq":"augmented_seq"}, display_bar=True):
+    def __init__(self, corruption_types={"span_deletion":{'min_tokens':1,'max_tokens':10, 'deletion_ratio':0.15, 'sub_token':'', 'merge_span':True}}, 
+                 fields={"input_seq":"input_seq", "augmented_seq":"augmented_seq"}, corruption_type='span_deletion', display_bar=True):
         '''
         This Transform is a step in data augmentation to produce input/output pairs for a BART style model.
         It is a live transform and as such returns the same number of samples and passed in despite the data augmentation.
@@ -484,6 +485,7 @@ class BART_Corrupt_Augmentation_Live_Transform():
         self.corruption_types = corruption_types
         self.fields = fields
         self.display_bar = display_bar
+        self.corruption_type = corruption_type
         
     def __call__(self, samples):
         '''
@@ -495,11 +497,10 @@ class BART_Corrupt_Augmentation_Live_Transform():
         else:
             pbar = samples
         for sample_obj in pbar:
-            corruption_type = random.choice(list(self.corruption_types.keys()))
-            if corruption_type == "span_deletion":
-                min_tokens = self.corruption_types[corruption_type]['min_tokens']
-                max_tokens = self.corruption_types[corruption_type]['max_tokens']
-                deletion_ratio = self.corruption_types[corruption_type]['deletion_ratio']
+            if self.corruption_type == "span_deletion":
+                min_tokens = self.corruption_types[self.corruption_type]['min_tokens']
+                max_tokens = self.corruption_types[self.corruption_type]['max_tokens']
+                deletion_ratio = self.corruption_types[self.corruption_type]['deletion_ratio']
                 
                 original_seq = sample_obj[self.fields["input_seq"]]
                 deletion_mask = [False]*len(original_seq)
@@ -509,7 +510,20 @@ class BART_Corrupt_Augmentation_Live_Transform():
                     deletion_mask[span_start: span_start+span_length] = [True]*len(deletion_mask[span_start: span_start+span_length])
                 
                 # deep copy so the original is unaffected
-                sample_obj[self.fields["augmented_seq"]] = [tok for tok, deleted in zip(original_seq, deletion_mask) if not deleted]
+                sample_obj[self.fields["augmented_seq"]] = [original_seq[0]]
+                for i in range(1, len(original_seq)):
+                    if not deletion_mask[i]:
+                        sample_obj[self.fields["augmented_seq"]].append(original_seq[i])
+                    else:
+                        prev_tok = sample_obj[self.fields["augmented_seq"]][-1]
+                        sub_token = self.corruption_types[self.corruption_type]['sub_token']
+                        merge_span = self.corruption_types[self.corruption_type]['merge_span']
+                        if sample_obj[self.fields["augmented_seq"]][-1] == sub_token and merge_span:
+                            continue
+                        if not sub_token:
+                            continue
+                        sample_obj[self.fields["augmented_seq"]].append(sub_token)
+#                 sample_obj[self.fields["augmented_seq"]] = [tok for tok, deleted in zip(original_seq, deletion_mask) if not deleted]
                 if isinstance(original_seq, str):
                     sample_obj[self.fields["augmented_seq"]] = ''.join(sample_obj[self.fields["augmented_seq"]])
                 
