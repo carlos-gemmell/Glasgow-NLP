@@ -397,7 +397,7 @@ class BART_Full_Conversational_Rewriter_Transform():
         return samples
     
 class BART_Conditional_Generator_Transform():
-    def __init__(self, model_or_path, device=None, show_tqdm=True, numericaliser="BART", denumericaliser='BART', chunk_size=8, pad_id=1, **kwargs):
+    def __init__(self, model_or_path, device=None, show_tqdm=True, numericaliser="BART", denumericaliser='BART', config=None, chunk_size=8, pad_id=1, **kwargs):
         '''
         A Transform that generates a token sequence given another sequence. It uses the BART tokenizer for input and output.
         
@@ -415,7 +415,6 @@ class BART_Conditional_Generator_Transform():
         self.show_tqdm = show_tqdm
         if isinstance(model_or_path, str):
             ckpt = torch.load(model_or_path, map_location=self.device)
-            config = ckpt['config']
             self.BART_conditional_generator = BART_Simple(config=config,**kwargs)
             self.BART_conditional_generator.load_state_dict(ckpt['state_dict'])
         else:

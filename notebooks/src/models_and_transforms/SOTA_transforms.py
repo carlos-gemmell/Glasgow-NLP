@@ -5,7 +5,8 @@ from tqdm.auto import tqdm
 
 
 class CoNaLa_SOTA_Transform():
-    def __init__(self, cuda=True, fields={'input_field':'input_text', 'output_field':'pred_text'}):
+    def __init__(self, cuda=True, fields={'input_field':'input_text', 'output_field':'pred_text'}, 
+                 model_file='src/external_repos/external-knowledge-codegen/best_pretrained_models/finetune.mined.retapi.distsmpl.dr0.3.lr0.001.lr_de0.5.lr_da15.beam15.seed0.mined_100000.intent_count100k_topk1_temp5.bin'):
         '''
         This uses the model from Frank Xu preseented in: 
         Incorporating External Knowledge through Pre-training for Natural Language to Code Generation
@@ -14,7 +15,6 @@ class CoNaLa_SOTA_Transform():
         '''        
         self.fields = fields
         parser = 'default_parser'
-        model_file = 'src/external_repos/external-knowledge-codegen/best_pretrained_models/finetune.mined.retapi.distsmpl.dr0.3.lr0.001.lr_de0.5.lr_da15.beam15.seed0.mined_100000.intent_count100k_topk1_temp5.bin'
         processor = 'conala_example_processor'
         beam_size = 15
         reranker_file = 'src/external_repos/external-knowledge-codegen/best_pretrained_models/reranker.conala.vocab.src_freq3.code_freq3.mined_100000.intent_count100k_topk1_temp5.bin'
@@ -33,9 +33,13 @@ class CoNaLa_SOTA_Transform():
         for sample_obj in tqdm(samples, desc='Tranx:'):
             input_text = sample_obj[self.fields['input_field']]
             input_text = input_text.strip()
-            hypotheses = self.parser.parse(input_text, debug=False)
-            
-            sample_obj[self.fields['output_field']] = hypotheses[0].code
+            try:
+                hypotheses = self.parser.parse(input_text, debug=False)
+                sample_obj[self.fields['output_field']] = hypotheses[0].code
+            except (IndexError, SyntaxError):
+                sample_obj[self.fields['output_field']] = ''
+                print("### ERROR ### input text:", input_text)
+                print(sys.exc_info()[0])
         return samples
     
 class Django_SOTA_Transform(CoNaLa_SOTA_Transform):

@@ -53,7 +53,7 @@ spec:
         # node-role.ida/gpu2080ti: "true"
       containers:
       - name: deepo-ml-plus
-        image: aquaktus/docker_ml_by_carlos:v11
+        image: aquaktus/docker_ml_by_carlos:v12
         resources:
           requests:
             cpu: "1500m"

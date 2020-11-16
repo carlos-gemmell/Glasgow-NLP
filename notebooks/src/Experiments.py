@@ -184,13 +184,12 @@ class Sequence_BLEU_Experiment():
             refrence_tokens = self.tokenize_for_bleu_eval(sample_obj[self.fields['target_seq']])
             if pred_tokens==[]:
                 pred_tokens = ['']
-            sample_obj["unsmoothed_official_BLEU"] = compute_bleu([refrence_tokens], pred_tokens, smooth=False)[0]
             sample_obj["nltk_BLEU"] = nltk_bleu(refrence_tokens, pred_tokens)
             
         if self.debug:
-            unsmoothed_official_BLEU = np.average([s["unsmoothed_official_BLEU"] for s in samples])
+            corpus_bleu = compute_bleu([[self.tokenize_for_bleu_eval(s[self.fields['target_seq']])] for s in samples], [self.tokenize_for_bleu_eval(s[self.fields['predicted_seq']]) for s in samples], smooth=False)[0]
             nltk_BLEU = np.average([s["nltk_BLEU"] for s in samples])
-            print(f'unsmoothed_official_BLEU: {unsmoothed_official_BLEU}')
+            print(f'corpus_official_BLEU: {corpus_bleu}')
             print(f'nltk_BLEU: {nltk_BLEU}')
         
         return samples

@@ -7,13 +7,15 @@ import numpy as np
 import random
 import torch
 import json
+import ujson
 import sys
 import pickle
 from pyserini.search import SimpleSearcher
 from .metrics import RecipRank, doc_search_subtask
 import csv
+import json_lines
 import os
-from tqdm.auto import tqdm 
+from tqdm import tqdm 
 
 from abc import ABC, abstractmethod
 
@@ -99,11 +101,15 @@ class CodeSearchNet_RawDataLoader(RawDataLoader):
         '''
         samples = self._get_split(split)
         samples = [sample_obj for sample_obj in tqdm(samples, desc=f'Filtering max chars: {self.max_chars}') if len(sample_obj['original_string'])<self.max_chars]
+        new_samples = []
         for sample_obj in tqdm(samples, desc='deleting bload fields'):
+            new_sample = {}
             for key in list(sample_obj.keys()):
-                if key not in fields and fields:
-                    del sample_obj[key]
-        return samples       
+                if key in fields and fields:
+                    new_sample[key] = sample_obj[key]
+            new_sample['only_code'] = sample_obj['code'].replace(sample_obj['docstring'], '')
+            new_samples.append(new_sample)
+        return new_samples       
         
 class CoNaLa_RawDataLoader(RawDataLoader):
     def __init__(self, data_directory="/nfs/phd_by_carlos/notebooks/datasets/CoNaLa/"):
@@ -404,3 +410,77 @@ class CAsT_RawDataLoader():
         >>> raw_data_loader.get_query("31_4", utterance_type="manual_rewritten_utterance")
         '''
         return self.query_collection[q_id][utterance_type]
+    
+    
+class Java_Small_RawDataLoader():
+    def __init__(self, data_directory="/nfs/phd_by_carlos/notebooks/datasets/java/", max_train_samples=10000):
+        
+        self.data_directory = data_directory
+        if not os.path.exists(data_directory):
+            os.makedirs(data_directory)
+            
+        train_file = os.path.join(data_directory, f"java-small-json/java-small.train.json")
+        valid_file = os.path.join(data_directory, f"java-small-json/java-small.val.json")
+        test_file = os.path.join(data_directory, f"java-small-json/java-small.test.json")
+        
+        train_samples_file = os.path.join(data_directory, f"java-small-json/train_samples.json")
+        valid_samples_file = os.path.join(data_directory, f"java-small-json/val_samples.json")
+        test_samples_file = os.path.join(data_directory, f"java-small-json/test_samples.json")
+        
+        zip_file = os.path.join(data_directory, f"java-small-json.tar.gz")
+        if not os.path.isfile(zip_file):
+            download_from_url(f"https://codegen-slm.s3.us-east-2.amazonaws.com/data/java-small-json.tar.gz", zip_file)
+            os.system(f'tar -xvzf {zip_file} -C {data_directory} --no-same-owner')
+            
+            print("One time load operation, cleaning up tree from data")
+            with open(train_file, 'r') as train_f, open(valid_file, 'r') as valid_f, open(test_file, 'r') as test_f:
+                train_samples = []
+                train_reader = json_lines.reader(train_f)
+                num_lines = sum(1 for line in open(train_file))
+                for i, sample in tqdm(enumerate(train_reader), desc="loading train", total=num_lines):
+                    code = sample['left_context']+sample['target_seq']+sample['right_context']
+                    train_samples.append({'code':code})
+                    if i > max_train_samples:
+                        break
+                ujson.dump(train_samples, open(train_samples_file, 'w'))
+
+                valid_samples = []
+                valid_reader = json_lines.reader(valid_f)
+                num_lines = sum(1 for line in open(valid_file))
+                for sample in tqdm(valid_reader, desc="loading valid", total=num_lines):
+                    code = sample['left_context']+sample['target_seq']+sample['right_context']
+                    valid_samples.append({'code':code})
+                ujson.dump(valid_samples, open(valid_samples_file, 'w'))
+
+                test_samples = []
+                test_reader = json_lines.reader(test_f)
+                num_lines = sum(1 for line in open(test_file))
+                for sample in tqdm(test_reader, desc="loading test", total=num_lines):
+                    code = sample['left_context']+sample['target_seq']+sample['right_context']
+                    test_samples.append({'code':code})
+                ujson.dump(test_samples, open(test_samples_file, 'w'))
+        
+        print("Loading simplified train/val/test files")
+        self.train_samples = ujson.load(open(train_samples_file, 'r'))[:max_train_samples]
+        self.valid_samples = ujson.load(open(valid_samples_file, 'r'))
+        self.test_samples = ujson.load(open(test_samples_file, 'r'))
+        
+    def _get_split(self, split):
+        if split=="train":
+            return self.train_samples
+        elif split=="valid":
+            return self.valid_samples
+        elif split=="test":
+            return self.test_samples
+        elif split=="all":
+            return self.train_samples + self.valid_samples
+        else:
+            raise Exception(f"'{split}' split not recognised.")
+            
+    def get_samples(self, split):
+        '''
+        split: str: "train", "test", "valild", "all"
+        returns: [dict]: [{'code':"java code"},...]
+        '''
+        samples = self._get_split(split)
+        return samples
