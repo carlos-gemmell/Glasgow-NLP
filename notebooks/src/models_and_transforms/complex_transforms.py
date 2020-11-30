@@ -172,7 +172,7 @@ class Random_ReRanker_Transform():
     
     
 class monoBERT_Scorer_Transform():
-    def __init__(self, checkpoint_dir="./saved_models/monoBERT/", device=None, PAD_id=0, batch_size=32):
+    def __init__(self, checkpoint_dir="./saved_models/monoBERT/", device=None, PAD_id=0, batch_size=32, **kwargs):
         '''
         checkpoint_path: str: path to only the state dict of the model, loaded with load_state_dict
         '''
@@ -213,7 +213,7 @@ class monoBERT_Scorer_Transform():
         return samples
     
 class DuoBERT_Scorer_Transform():
-    def __init__(self,checkpoint_dir="./saved_models/duoBERT/", device=None, PAD_id=0, batch_size=32):
+    def __init__(self,checkpoint_dir="./saved_models/duoBERT/", device=None, PAD_id=0, batch_size=32, **kwargs):
         '''
         DuoBERT takes in a query and two documents and gives a scoore to the one that is most rellevant between each.
         
