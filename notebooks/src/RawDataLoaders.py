@@ -312,19 +312,21 @@ class MS_Marco_RawDataLoader(RawDataLoader):
 class CAsT_RawDataLoader():
     def __init__(self, CAsT_index="/nfs/phd_by_carlos/notebooks/datasets/TREC_CAsT/CAsT_collection_with_meta.index",
                  treccastweb_dir="/nfs/phd_by_carlos/notebooks/datasets/TREC_CAsT/treccastweb",
-                 NIST_qrels="/nfs/phd_by_carlos/notebooks/datasets/TREC_CAsT/2019qrels.txt", **kwargs):
+                 NIST_qrels=["/nfs/phd_by_carlos/notebooks/datasets/TREC_CAsT/2019qrels.txt",
+                            '/nfs/phd_by_carlos/notebooks/datasets/TREC_CAsT/2020qrels.txt'], **kwargs):
         
         self.searcher = SimpleSearcher(CAsT_index)
         self.q_rels = {}
-        with open(NIST_qrels) as NIST_fp:
-            for line in NIST_fp.readlines():
-                q_id, _, d_id, score = line.split(" ")
-                if int(score) < 3:
-                    # ignore some of the worst ranked
-                    continue
-                if q_id not in self.q_rels:
-                    self.q_rels[q_id] = []
-                self.q_rels[q_id].append(d_id)
+        for q_rel_file in NIST_qrels:
+            with open(q_rel_file) as NIST_fp:
+                for line in NIST_fp.readlines():
+                    q_id, _, d_id, score = line.split(" ")
+                    if int(score) < 3:
+                        # ignore some of the worst ranked
+                        continue
+                    if q_id not in self.q_rels:
+                        self.q_rels[q_id] = []
+                    self.q_rels[q_id].append(d_id)
                 
         with open(os.path.join(treccastweb_dir,"2020/2020_manual_evaluation_topics_v1.0.json")) as y2_fp:
             y2_data = json.load(y2_fp)
@@ -413,7 +415,7 @@ class CAsT_RawDataLoader():
     
     
 class Java_Small_RawDataLoader():
-    def __init__(self, data_directory="/nfs/phd_by_carlos/notebooks/datasets/java/", max_train_samples=10000):
+    def __init__(self, data_directory="/nfs/phd_by_carlos/notebooks/datasets/java/", max_train_samples=10000, load_override=False):
         
         self.data_directory = data_directory
         if not os.path.exists(data_directory):
@@ -431,7 +433,9 @@ class Java_Small_RawDataLoader():
         if not os.path.isfile(zip_file):
             download_from_url(f"https://codegen-slm.s3.us-east-2.amazonaws.com/data/java-small-json.tar.gz", zip_file)
             os.system(f'tar -xvzf {zip_file} -C {data_directory} --no-same-owner')
+            load_override = True
             
+        if load_override:
             print("One time load operation, cleaning up tree from data")
             with open(train_file, 'r') as train_f, open(valid_file, 'r') as valid_f, open(test_file, 'r') as test_f:
                 train_samples = []
@@ -439,7 +443,9 @@ class Java_Small_RawDataLoader():
                 num_lines = sum(1 for line in open(train_file))
                 for i, sample in tqdm(enumerate(train_reader), desc="loading train", total=num_lines):
                     code = sample['left_context']+sample['target_seq']+sample['right_context']
-                    train_samples.append({'code':code})
+                    train_samples.append({'code':code, 
+                                         'mask_idx_start':len(sample['left_context']), 
+                                         'mask_idx_end':len(sample['left_context'])+len(sample['target_seq'])})
                     if i > max_train_samples:
                         break
                 ujson.dump(train_samples, open(train_samples_file, 'w'))
@@ -449,7 +455,9 @@ class Java_Small_RawDataLoader():
                 num_lines = sum(1 for line in open(valid_file))
                 for sample in tqdm(valid_reader, desc="loading valid", total=num_lines):
                     code = sample['left_context']+sample['target_seq']+sample['right_context']
-                    valid_samples.append({'code':code})
+                    valid_samples.append({'code':code, 
+                                         'mask_idx_start':len(sample['left_context']), 
+                                         'mask_idx_end':len(sample['left_context'])+len(sample['target_seq'])})
                 ujson.dump(valid_samples, open(valid_samples_file, 'w'))
 
                 test_samples = []
@@ -457,7 +465,9 @@ class Java_Small_RawDataLoader():
                 num_lines = sum(1 for line in open(test_file))
                 for sample in tqdm(test_reader, desc="loading test", total=num_lines):
                     code = sample['left_context']+sample['target_seq']+sample['right_context']
-                    test_samples.append({'code':code})
+                    test_samples.append({'code':code, 
+                                         'mask_idx_start':len(sample['left_context']), 
+                                         'mask_idx_end':len(sample['left_context'])+len(sample['target_seq'])})
                 ujson.dump(test_samples, open(test_samples_file, 'w'))
         
         print("Loading simplified train/val/test files")

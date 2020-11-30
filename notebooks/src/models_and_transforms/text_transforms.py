@@ -2,7 +2,7 @@ import copy
 from transformers import BertTokenizer, BartTokenizer
 from tokenizers import processors, Tokenizer
 from src.useful_utils import download_from_url
-from tqdm.auto import tqdm 
+from tqdm import tqdm 
 import random
 import ujson
 import re 
@@ -195,7 +195,7 @@ class DuoBERT_Numericalise_Transform():
         return samples
     
 class Numericalise_Transform():
-    def __init__(self, numericaliser='BART', fields=[("input_text","input_ids")], use_ray=False, debug=True, **kwargs):
+    def __init__(self, numericaliser='BART', fields=[("input_text","input_ids")], use_ray=False, debug=True, max_len=1000, **kwargs):
         if numericaliser == 'BART':
             self.numericaliser = BartTokenizer.from_pretrained('facebook/bart-large').encode
         elif numericaliser == 'BERT':
@@ -213,6 +213,7 @@ class Numericalise_Transform():
             print(f"Numericaliser. Ex: 'This is a test' -> {self.numericaliser('This is a test')}")
         self.fields = fields
         self.use_ray = use_ray
+        self.max_len = max_len
     
     def __call__(self, samples):
         '''
@@ -225,7 +226,7 @@ class Numericalise_Transform():
         else:
             for sample_obj in samples:
                 for str_field, id_field in self.fields:
-                    sample_obj[id_field] = self.numericaliser(sample_obj[str_field])
+                    sample_obj[id_field] = self.numericaliser(sample_obj[str_field])[:self.max_len]
             return samples
     
     @ray.remote(num_cpus=1)
@@ -597,4 +598,62 @@ class Rename_Transform():
                     sample_obj.pop(src_field)
                 else:
                     sample_obj[tgt_field] = sample_obj.pop(src_field)
+        return samples
+    
+    
+class Selective_Substitution_Transform():
+    def __init__(self, sub_token='<mask>', fields={'stat_idx_field':'mask_idx_start', 'end_idx_field':'mask_idx_end', 
+                                                   'text_field':'code', 'target_field':'sub_code'}):
+        self.fields = fields
+        self.sub_token = sub_token
+        
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'code':'this is some code', 'mask_idx_start':5, 'mask_idx_end':7}]
+        returns: [dict]: [{'sub_code': 'this <mask> some code', 'code':'this is some code', 'mask_idx_start':5, 'mask_idx_end':7}]
+        '''
+        for sample in samples:
+            start_idx = sample[self.fields['stat_idx_field']]
+            end_idx = sample[self.fields['end_idx_field']]
+            subtituted_seq = sample[self.fields['text_field']][:start_idx] + self.sub_token + sample[self.fields['text_field']][end_idx:]
+            sample[self.fields['target_field']] = subtituted_seq
+        return samples
+
+class Codify_Template_Transform():
+    def __init__(self, mask_token='<mask>'):
+        self.mask_token = mask_token
+    
+    def __call__(self, samples):
+        '''
+        Creates a template form on the code and description to align the fine tuning process with the pre-training objective.
+        
+        samples: [dict]: [{'code':'print("hello world")', 'description':'print a greeting'}]
+        returns: [dict]: [{'template_desc':'# print a greeting\n<mask>', 'template_code':'# print a greeting\nprint("hello world")', 'code':'...}]
+        '''
+        for sample in samples:
+            desc = sample['description']
+            code = sample['code']
+            
+            sample['template_desc'] = f"# {desc}\n{self.mask_token}"
+            sample['template_code'] = f"# {desc}\n{code}"
+        return samples
+    
+    
+class Template_Cleanup_Transform():
+    def __init__(self, fields={}):
+        self.fields = {'template_code_field':'template_code', 
+                       'clean_code_field':'clean_code'}
+        self.fields.update(fields)
+        
+    def __call__(self, samples):
+        '''
+        Cleans the code to remove the initial commented description according to the Codify_Template_Transform.
+        Here we only keep after the first new line.
+        
+        samples: [dict]: [{'template_code':'# print a greeting\nprint("hello world")'},...]
+        samples: [dict]: [{'template_code':'print("hello world")', 'template_code':'# print a gr...'}]
+        '''
+        for sample in samples:
+            template_code = sample[self.fields['template_code_field']]
+            sample[self.fields['clean_code_field']] = template_code[template_code.find('\n')+1:]
         return samples

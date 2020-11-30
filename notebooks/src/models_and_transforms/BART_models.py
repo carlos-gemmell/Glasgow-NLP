@@ -20,6 +20,9 @@ class BART_Simple(LightningModule):
             self.BART.final_logits_bias[0][2]=5.0
         else:
             self.BART = BartForConditionalGeneration.from_pretrained('facebook/bart-large-cnn')
+    
+    def __delete__(self, instance):
+        del self.BART
 
     def forward(self, encoder_input, decoder_input):
         outputs = self.BART(input_ids, decoder_input_ids=decoder_input)
@@ -53,7 +56,7 @@ class BART_Simple(LightningModule):
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.95)
         return [optimizer], [scheduler]
     
-    def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_i, second_order_closure, using_native_amp):
+    def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_i, second_order_closure, using_native_amp, **kwargs):
         # warm up lr
         # warm up for 500 steps
         if self.trainer.global_step < 500:
@@ -72,10 +75,16 @@ class BART_Simple(LightningModule):
     def backward(self, use_amp, loss, optimizer, _):
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.parameters(), 0.5)
+                
         
     def generate(self, *args,**kwargs):
         return self.BART.generate(*args,**kwargs)
     
+
+class BART_Embedder(BART_Simple):
+    def forward(self, encoder_input):
+#         outputs = self.BART.encoder(input_ids, encoder_outputs=)
+        return outputs
     
 class BART_Query_ReWriter(BART_Simple):
     def validation_step(self, batch, batch_idx):
@@ -110,8 +119,7 @@ class BART_Query_ReWriter(BART_Simple):
             else:
                 sample_obj["predicted_seq"] = query_elements[0]
         experiment = Sequence_BLEU_Experiment()
-        metrics = experiment(samples)
-        print(metrics)
+        metrics = experiment.overall(samples)
         for i in range(3):
             random_sample = random.choice(samples)
             print(f"-----EXAMPLE-{i}------")
@@ -119,5 +127,5 @@ class BART_Query_ReWriter(BART_Simple):
             print(f"      Pred: '{random_sample['predicted_seq']}'")
             print(f"    Target: '{random_sample['target_seq']}'")
             print("------------------")
-        return {'val_loss':metrics["BLEU"], 'log':metrics}
+        return {'val_loss':metrics["nltk_BLEU"], 'log':metrics}
             

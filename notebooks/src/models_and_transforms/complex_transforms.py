@@ -5,10 +5,11 @@ from src.models_and_transforms.run_file_models import Run_File_Searcher
 from src.models_and_transforms.text_transforms import *
 from src.useful_utils import chunks
 
-from tqdm.auto import tqdm 
+from tqdm import tqdm 
 import torch
 from itertools import permutations 
 import random
+from scipy.interpolate import interp1d
 
 class Manual_Query_Doc_Pipe_Transform():
     def __init__(self, get_query_fn, get_doc_fn):
@@ -302,6 +303,7 @@ class DuoBERT_ReRanker_Transform():
         '''
         for sample_obj in tqdm(samples, desc="Reranking queries"):
             query = sample_obj["query"]
+            
             d_ids = [d_id for d_id, score in sample_obj["search_results"]]
             d_id_permutations = list(permutations(d_ids[:self.rerank_top], 2))
 
@@ -321,6 +323,13 @@ class DuoBERT_ReRanker_Transform():
                 d_id_scores[scored_perm['d_idB']] -= scored_perm['score']
             
             new_scored_samples = [(d_id, score) for d_id, score in d_id_scores.items()]
+            
+            current_scores = [score for d_id, score in sample_obj["search_results"][:self.rerank_top]]
+            new_scores = [score for d_id, score in new_scored_samples]
+            score_map = interp1d([min(new_scores),max(new_scores)],[min(current_scores),max(current_scores)])
+            
+            new_scored_samples = [(d_id, float(score_map(score))) for d_id, score in new_scored_samples]
+            
             sample_obj["reranked_results"] = sorted(new_scored_samples, key=lambda score_tpl: score_tpl[1], reverse=True)
             sample_obj["reranked_results"] += [s for s in sample_obj["search_results"] if s[0] not in d_id_scores]
         return samples
@@ -340,8 +349,8 @@ class BART_Query_Rewriter_Transform():
         self.BART_query_rewriter = BART_Query_ReWriter(**kwargs)
         self.BART_query_rewriter.load_state_dict(torch.load(checkpoint_path, map_location=self.device))
         self.BART_query_rewriter.to(self.device)
-        self.BART_numericalise_transform = BART_Numericalise_Transform(fields=[('input_text','input_ids')])
-        self.BART_denumericalise_transform = BART_Denumericalise_Transform(fields=[('pred_ids','rewritten_query')])
+        self.BART_numericalise_transform = Numericalise_Transform(fields=[('input_text','input_ids')])
+        self.BART_denumericalise_transform = Denumericalise_Transform(fields=[('pred_ids','rewritten_query')])
         self.rewriter_context_query_merge_transform = Rewriter_Context_Query_Merge_Transform()
         print(f"BERT ReRanker initialised on {self.device}. Batch size {1}")
     
@@ -397,7 +406,7 @@ class BART_Full_Conversational_Rewriter_Transform():
         return samples
     
 class BART_Conditional_Generator_Transform():
-    def __init__(self, model_or_path, device=None, show_tqdm=True, numericaliser="BART", denumericaliser='BART', config=None, chunk_size=8, pad_id=1, **kwargs):
+    def __init__(self, model_or_path, device=None, show_tqdm=True, numericaliser="BART", denumericaliser='BART', config=None, chunk_size=64, pad_id=1, **kwargs):
         '''
         A Transform that generates a token sequence given another sequence. It uses the BART tokenizer for input and output.
         
@@ -424,6 +433,10 @@ class BART_Conditional_Generator_Transform():
         self.BART_numericalise_transform = Numericalise_Transform(numericaliser=numericaliser, fields=[('input_text','input_ids')], **kwargs)
         self.PAD = pad_id
         self.BART_denumericalise_transform = Denumericalise_Transform(denumericaliser=denumericaliser, fields=[('pred_ids','pred_text')], **kwargs)
+    
+    def __delete__(self, instance):
+        del self.BART_conditional_generator
+        torch.cuda.empty_cache()
         
     def __call__(self, samples):
         '''

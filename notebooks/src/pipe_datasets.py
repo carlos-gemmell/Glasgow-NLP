@@ -213,7 +213,7 @@ class CAsT_Query_ReWriting_Dataset(BART_Pipe_Dataset):
         fast_pipe = [
             Rewriter_Context_Query_Merge_Transform(**kwargs),
             Rewriter_Context_Target_Transform(**kwargs),
-            BART_Numericalise_Transform(fields=[('input_text', 'input_ids'), ('target_text', 'target_ids')])
+            Numericalise_Transform(fields=[('input_text', 'input_ids'), ('target_text', 'target_ids')])
         ]
         
         super().__init__(samples, slow_pipe, fast_pipe, **kwargs)

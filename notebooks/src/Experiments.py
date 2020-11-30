@@ -7,7 +7,10 @@ import sys
 from .useful_utils import string_split_v3, string_split_v1, chunks
 import pytrec_eval
 import json
+import subprocess
+import csv
 import re
+import ast
 from tqdm.auto import tqdm 
 from .bleu_score import compute_bleu
 
@@ -130,6 +133,47 @@ class CAsT_experiment(Experiment):
             mean_dict[key] = sum(d[key] for d in dict_list) / len(dict_list)
         return mean_dict
     
+class TREC_Eval_Command_Experiment():
+    def __init__(self, trec_eval_command='trec_eval -q -c -M1000  -m ndcg_cut.3,5,10,15,20,100,1000 -m all_trec qRELS RUN_FILE',
+                relevant_metrics=['ndcg_cut_3', 'ndcg_cut_5', 'ndcg_cut_1000', 'map_cut_1000', 'recall_500', 'recall_1000'],
+                q_rel_file='datasets/TREC_CAsT/2020qrels.txt'):
+        '''
+        This is an experiment transform that uses the official trec_eval command to compute scores for each query 
+        and return valid results according to the command specified.
+        '''
+        self.trec_eval_command = trec_eval_command
+        self.relevant_metrics = relevant_metrics
+        self.q_rel_file = q_rel_file
+        
+        self.temp_run_file = '/tmp/temp_run_by_carlos.run'
+        self.run_file_exporter = RUN_File_Transform_Exporter(self.temp_run_file, model_name='temp_model_by_carlos')
+        
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'q_id':"xxx", 'search_results':[("MARCO_xxx", 0.63)...]},...]
+        returns: [dict]: [{'q_id':"xxx", 'search_results':[("MARCO_xxx", 0.63)...], 'ndcg_cut_3':0.33, 'ndcg_cut_5'...},...]
+        '''
+        self.run_file_exporter(samples)
+        resolved_command = self.trec_eval_command.replace('qRELS', self.q_rel_file).replace('RUN_FILE', self.temp_run_file)
+        print(f'Running the following command: {resolved_command} > /tmp/temp_run.eval')
+        os.system(f'{resolved_command} > /tmp/temp_run.eval')
+        
+        with open('/tmp/temp_run.eval', 'r') as eval_f:
+            eval_results = {}
+            for row in eval_f:
+                if not any([metric in row for metric in self.relevant_metrics]):
+                    continue
+                metric, q_id, score = row.split()
+                if q_id not in eval_results:
+                    eval_results[q_id] = {}
+                eval_results[q_id][metric] = float(score)
+                
+        for sample in samples:
+            if sample['q_id'] not in eval_results:
+                print(f"q_rel missing for q_id {sample['q_id']}. No scores added to sample")
+                continue
+            sample.update(eval_results[sample['q_id']])
+        return samples
     
 
 class Ranking_Experiment():
@@ -194,6 +238,13 @@ class Sequence_BLEU_Experiment():
         
         return samples
     
+    def overall(self, samples):
+        samples = self(samples)
+        corpus_bleu = compute_bleu([[self.tokenize_for_bleu_eval(s[self.fields['target_seq']])] for s in samples],
+                                   [self.tokenize_for_bleu_eval(s[self.fields['predicted_seq']]) for s in samples], smooth=False)[0]
+        nltk_BLEU = np.average([s["nltk_BLEU"] for s in samples])
+        return {'nltk_BLEU':nltk_BLEU, 'corpus_BLEU':corpus_bleu}
+    
     def tokenize_for_bleu_eval(self, code):
         """ 
         The tokenizer that we use for code submissions, from Wang Ling et al., Latent Predictor Networks for Code Generation (2016)
@@ -208,6 +259,33 @@ class Sequence_BLEU_Experiment():
         tokens = [t for t in code.split(' ') if t]
 
         return tokens
+    
+class Compilability_Experiment():
+    def __init__(self, fields={}):
+        '''
+        an experiment to evaluate the vallidity of a sequence as actual compilable code. Here in Python 3.
+        '''
+        self.fields = {'code_field': 'code'}
+        self.fields.update(fields)
+    
+    def __call__(self, samples):
+        '''
+        samples: [dict]: [{'code':'print("foo")'},...]
+        returns: [dict]: [{'code':'print("foo")', 'compiles':1},...]
+        '''
+        for sample_obj in samples:
+            try:
+                code = sample_obj[self.fields['code_field']]
+                ast.parse(code)
+                sample_obj['compiles'] = 1
+            except:
+                sample_obj['compiles'] = 0
+        return samples
+    
+    def overall(self, samples):
+        samples = self(samples)
+        compilability_score = np.average([s["compiles"] for s in samples])
+        return {'compilability_score':compilability_score}
     
 class RUN_File_Transform_Exporter():
     def __init__(self, run_file_path, model_name='model_by_carlos'):

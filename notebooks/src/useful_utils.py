@@ -10,8 +10,35 @@ import jsonlines
 import numpy as np
 from  heapq import heappush, heappop, nsmallest
 from anytree import Node, RenderTree, NodeMixin, find_by_attr
-from tqdm.auto import tqdm  
+from tqdm import tqdm  
 from pytorch_lightning import Callback, EvalResult
+
+class Save_On_Interval_Callback(Callback):
+    def __init__(self, save_dir, interval=0.5, monitor=None, skip_epochs=[]):
+        self.interval = interval
+        self.save_dir = save_dir
+        self.skip_epochs = skip_epochs
+        self.first_valid_complete = False
+        
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+            
+    def on_batch_end(self, trainer, pl_module):
+        if trainer.limit_train_batches:
+            total_steps = len(trainer.train_dataloader) * trainer.limit_train_batches
+        else: 
+            total_steps = len(trainer.train_dataloader)
+        
+        if (trainer.global_step % int(total_steps*self.interval) == 0 and trainer.current_epoch not in self.skip_epochs) or not self.first_valid_complete:
+            self.first_valid_complete = True
+                
+            saving_filename = f"SAVING_{trainer.global_step}_steps.ckpt"
+            saved_filename = f"SAVED_{trainer.global_step}_steps.ckpt"
+            trainer.save_checkpoint(os.path.join(self.save_dir, saving_filename))
+            try:
+                os.rename(os.path.join(self.save_dir, saving_filename), os.path.join(self.save_dir, saved_filename))
+            except:
+                print(f'{saving_filename} was already renamed')
 
 class Validate_and_Save_Callback(Callback):
     def __init__(self, filepath, prefix='', validate_fn=None, interval=0.5, monitor=None, skip_epochs=[]):
@@ -65,6 +92,23 @@ class Validate_and_Save_Callback(Callback):
                     return
                 self.prev_best = val_dict[self.monitor]
             trainer.save_checkpoint(filepath)
+            
+def tryint(s):
+    try:
+        return int(s)
+    except ValueError:
+        return s
+
+def alphanum_key(s):
+    """ Turn a string into a list of string and number chunks.
+        "z23a" -> ["z", 23, "a"]
+    """
+    return [ tryint(c) for c in re.split('([0-9]+)', s) ]
+
+def sort_nicely(l):
+    """ Sort the given list in the way that humans expect.
+    """
+    l.sort(key=alphanum_key)
 
 def download_from_url(url, dst):
     """
