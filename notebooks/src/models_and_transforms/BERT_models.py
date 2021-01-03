@@ -13,6 +13,65 @@ from src.models_and_transforms.text_transforms import Reranking_Sampler_Transfor
 from src.Experiments import Ranking_Experiment
 
 
+class AlphaBERT(LightningModule):
+    def __init__(self, config, h_dim=10, **kwargs):
+        super().__init__(**kwargs)
+#         self.data_processor = data_processor
+        self.BERT = BertModel(config)
+        self.dropout = nn.Dropout(0.5)
+        self.value_layer = nn.Linear(h_dim, 1)
+        self.LM_layer = nn.Linear(h_dim, config.vocab_size)
+
+        
+    def forward(self, x, **kwargs):
+        outputs = self.BERT(x, **kwargs)
+        logits = outputs[0]
+        logits = self.dropout(logits)
+        value_logit = self.value_layer(logits[:,-1])
+        
+        policy_logit = self.LM_layer(logits[:,-2])
+        return value_logit, policy_logit
+        
+    def training_step(self, batch, batch_idx):
+        encoder_input = batch["input_ids"]
+        attention_mask = batch["attention_mask"]
+#         loss = self.BERT_for_class(encoder_input, labels=labels, attention_mask=attention_mask)[0]
+        value_logit, policy_logit = self(encoder_input, attention_mask=attention_mask)
+#         print(output.view(-1), labels.view(-1))
+#         loss = nn.BCEWithLogitsLoss()(output.view(-1), labels.view(-1))
+        loss = 0
+        if 'target_value' in batch:
+            target_value = batch["target_value"]
+            value_loss = nn.MSELoss()(value_logit.view(-1), target_value.view(-1))
+        else:
+            value_loss = 0
+        
+        if 'target_policy' in batch:
+            target_policy = batch["target_policy"]
+            if target_policy.shape[1] == 1:
+                # single word target
+#                 print(policy_logit.view(-1,self.BERT.config.vocab_size))
+#                 print(target_policy.view(-1))
+                policy_loss = nn.CrossEntropyLoss()(policy_logit.view(-1,self.BERT.config.vocab_size), target_policy.view(-1))
+            elif target_policy.shape[1] == self.BERT.config.vocab_size:
+                # full policy target
+                policy_loss = -torch.dot(target_policy.view(-1)**temp, torch.log(policy_dist.view(-1)))
+            else:
+                raise f"incorrect shape for target_policy {target_policy.shape}"
+        else:
+            target_policy = 0
+            
+        loss = value_loss + policy_loss
+            
+        return {"loss":loss, 'log': {'train_loss': loss}}
+    
+    def configure_optimizers(self):
+        optimizer = AdamW(self.parameters(), lr=0.01, weight_decay=0.0)
+#         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=0.01, steps_per_epoch=10000, epochs=1)
+#         scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=500, num_training_steps=15000)
+        return optimizer#, [scheduler]
+
+
 class BERT_Reranker(LightningModule):
     def __init__(self, h_dim=768, **kwargs):
         super().__init__(**kwargs)

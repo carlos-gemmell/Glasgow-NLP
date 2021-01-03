@@ -237,3 +237,28 @@ class BART_Corrupted_Span_Prediction_Dataset(BART_Pipe_Dataset):
         super().__init__(samples, slow_pipe, fast_pipe, **kwargs)
         
     
+class Scratch_Pad_Policy_Dataset(Pipe_Dataset):
+    def __init__(self, samples, slow_pipe, real_time_pipe, PAD=0, **kwargs):
+        
+        self.real_time_pipe = real_time_pipe
+        self.PAD = PAD
+        
+        pbar = tqdm(slow_pipe)
+        for transform in pbar:
+            pbar.set_description(transform.__class__.__name__)
+            samples = transform(samples)
+        self.samples = samples
+        
+    def collate(self, input_samples):
+        """
+        input_samples: [dict]: these are samples obtained through the __getitem__ method
+        """
+        collated_samples = {}
+        collated_samples["input_ids"] = torch.nn.utils.rnn.pad_sequence([torch.tensor(sample["input_ids"][::-1], dtype=torch.long) for sample in input_samples], 
+                                                 padding_value=self.PAD, batch_first=True)
+        collated_samples["input_ids"] = torch.flip(collated_samples["input_ids"], [1])
+        
+        collated_samples["attention_mask"] = (collated_samples["input_ids"] != self.PAD).type(torch.float)
+        collated_samples["target_policy"] = torch.tensor([sample["target_policy"] for sample in input_samples], dtype=torch.long)
+        
+        return collated_samples
