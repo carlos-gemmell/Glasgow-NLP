@@ -7,6 +7,7 @@ import random
 import ujson
 import re 
 import os
+import pickle
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.feature_extraction import text
 import ray
@@ -657,3 +658,77 @@ class Template_Cleanup_Transform():
             template_code = sample[self.fields['template_code_field']]
             sample[self.fields['clean_code_field']] = template_code[template_code.find('\n')+1:]
         return samples
+    
+    
+class Scratch_Pad_Sequence_Policy_Creator_Transform():
+    def __init__(self, execution_token_id, newline_token_id, mask_token_id, value_token_id, **kwargs):
+        '''
+        This transform identifies non auto-generarted sequences of token IDs and produces input samples for AlphaBERT.
+        '''
+        self.execution_token_id = execution_token_id
+        self.newline_token_id = newline_token_id
+    
+    def __call__(self, samples, **kwargs):
+        '''
+        samples: [dict]: [{'input_seq':[1212, 318, 257, 1332]}]
+        returns: [dict]: [{'input_ids':[1212, 318, 257], 'target_policy': [1332],...}, 
+                          {'input_ids':[1212, 318], 'target_policy': [257],...}
+        '''
+        policy_samples = [] 
+        for sample_obj in samples:
+            input_seq = sample_obj['input_seq']
+            auto_gen_mask = [False]*len(input_seq)
+            auto_gen_token_mode = False
+            for j in range(len(input_seq)):
+                auto_gen_mask[j] = auto_gen_token_mode
+                if input_seq[j] == self.execution_token_id:
+                    auto_gen_token_mode = True
+                elif input_seq[j] == self.newline_token_id:
+                    auto_gen_token_mode = False
+            
+            for i, is_auto_generated in enumerate(auto_gen_mask[:]):
+                if not is_auto_generated:
+                    s = copy.deepcopy(sample_obj)
+                    s['input_ids'] = input_seq[:i]
+                    s['target_policy'] = [input_seq[i]]
+                    policy_samples.append(s)
+        return policy_samples
+    
+    
+class Class_Rebalance_Transform():
+    def __init__(self, field, **kwargs):
+        '''
+        This is a class that multiplies the minority classes such that they are roughly equal to the majority class.
+        field: str: 'type'
+        '''
+        self.field = field
+        
+    def __call__(self, samples, **kwargs):
+        '''
+        samples: [dict]: [{'type':'a'},{'type':'b'},{'type':'a'}]
+        returns: [dict]: [{'type':'a'},{'type':'b'},{'type':'a'},{'type':'b'}]
+        '''
+        classes = {}
+        class_sizes = {}
+        for sample_obj in samples:
+            if sample_obj[self.field] not in classes:
+                classes[sample_obj[self.field]] = []
+                class_sizes[sample_obj[self.field]] = 0
+            classes[sample_obj[self.field]].append(sample_obj)
+            class_sizes[sample_obj[self.field]] +=1
+        
+        maximal_class_len = max([class_size for class_size in class_sizes.values()])
+        for class_val in classes.keys():
+            samples += [self.dict_deepcopy(s) for s in random.choices(classes[class_val], k=maximal_class_len-class_sizes[class_val])]
+            
+        return samples
+    
+    
+    def dict_deepcopy(self, d):
+        new_d = {}
+        for k, v in d.items():
+            if type(v) == dict:
+                new_d[k] = self.dict_deepcopy(v)
+            else:
+                new_d[k] = copy.deepcopy(v)
+        return new_d

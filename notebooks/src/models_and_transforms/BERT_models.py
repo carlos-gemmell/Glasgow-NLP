@@ -14,13 +14,15 @@ from src.Experiments import Ranking_Experiment
 
 
 class AlphaBERT(LightningModule):
-    def __init__(self, config, h_dim=10, **kwargs):
+    def __init__(self, config, mask_token_id, value_token_id, pad_token_id, **kwargs):
         super().__init__(**kwargs)
-#         self.data_processor = data_processor
+        self.mask_token_id = mask_token_id
+        self.value_token_id = value_token_id
+        self.pad_token_id = pad_token_id
         self.BERT = BertModel(config)
-        self.dropout = nn.Dropout(0.5)
-        self.value_layer = nn.Linear(h_dim, 1)
-        self.LM_layer = nn.Linear(h_dim, config.vocab_size)
+        self.dropout = nn.Dropout(0.1)
+        self.value_layer = nn.Linear(config.hidden_size, 1)
+        self.LM_layer = nn.Linear(config.hidden_size, config.vocab_size)
 
         
     def forward(self, x, **kwargs):
@@ -28,15 +30,14 @@ class AlphaBERT(LightningModule):
         logits = outputs[0]
         logits = self.dropout(logits)
         value_logit = self.value_layer(logits[:,-1])
-        
         policy_logit = self.LM_layer(logits[:,-2])
-        return value_logit, policy_logit
+        return policy_logit, value_logit
         
     def training_step(self, batch, batch_idx):
         encoder_input = batch["input_ids"]
         attention_mask = batch["attention_mask"]
 #         loss = self.BERT_for_class(encoder_input, labels=labels, attention_mask=attention_mask)[0]
-        value_logit, policy_logit = self(encoder_input, attention_mask=attention_mask)
+        policy_logit, value_logit = self(encoder_input, attention_mask=attention_mask)
 #         print(output.view(-1), labels.view(-1))
 #         loss = nn.BCEWithLogitsLoss()(output.view(-1), labels.view(-1))
         loss = 0
@@ -55,7 +56,7 @@ class AlphaBERT(LightningModule):
                 policy_loss = nn.CrossEntropyLoss()(policy_logit.view(-1,self.BERT.config.vocab_size), target_policy.view(-1))
             elif target_policy.shape[1] == self.BERT.config.vocab_size:
                 # full policy target
-                policy_loss = -torch.dot(target_policy.view(-1)**temp, torch.log(policy_dist.view(-1)))
+                policy_loss = -torch.dot(target_policy.view(-1)**self.BERT.config.temp, torch.log(policy_logit.softmax(-1)).view(-1))/policy_logit.shape[0]
             else:
                 raise f"incorrect shape for target_policy {target_policy.shape}"
         else:
@@ -70,6 +71,28 @@ class AlphaBERT(LightningModule):
 #         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=0.01, steps_per_epoch=10000, epochs=1)
 #         scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=500, num_training_steps=15000)
         return optimizer#, [scheduler]
+
+    def predict(self, x, **kwargs):
+        x = x.to(self.device)
+        x = torch.cat([x, torch.tensor([[self.mask_token_id,self.value_token_id]], device=self.device).repeat(x.shape[0],1)], dim=1)
+        policy_logit, value_logit = self.forward(x, attention_mask=(x!=self.pad_token_id), **kwargs)
+        p = torch.softmax(policy_logit, dim=-1)
+        return p.data.cpu(),  value_logit.data.cpu()
+    
+    def predict_Transform(self, canonical_state_batch, pad_id=50258, **kwargs):
+        x = torch.nn.utils.rnn.pad_sequence([torch.flip(canonical_state["input_ids"][0], [0]) for canonical_state in canonical_state_batch], 
+                                                 padding_value=pad_id, batch_first=True)
+        x = torch.flip(x, [1]).to(self.device)
+        attention_mask = (x != pad_id).type(torch.float)
+        policy_logits, value_logits = self.forward(x, attention_mask=attention_mask, **kwargs)
+        p = torch.softmax(policy_logits, dim=-1).data.cpu()
+        v = value_logits.data.cpu()
+        for i, canonical_state in enumerate(canonical_state_batch):
+            canonical_state['model_policy'] = p[i]
+            canonical_state['model_value'] = v[i]
+        return canonical_state_batch
+        
+            
 
 
 class BERT_Reranker(LightningModule):

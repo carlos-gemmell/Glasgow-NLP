@@ -254,11 +254,13 @@ class Scratch_Pad_Policy_Dataset(Pipe_Dataset):
         input_samples: [dict]: these are samples obtained through the __getitem__ method
         """
         collated_samples = {}
-        collated_samples["input_ids"] = torch.nn.utils.rnn.pad_sequence([torch.tensor(sample["input_ids"][::-1], dtype=torch.long) for sample in input_samples], 
+        collated_samples["input_ids"] = torch.nn.utils.rnn.pad_sequence([torch.flip(sample["input_ids"][0], [0]) for sample in input_samples], 
                                                  padding_value=self.PAD, batch_first=True)
         collated_samples["input_ids"] = torch.flip(collated_samples["input_ids"], [1])
         
         collated_samples["attention_mask"] = (collated_samples["input_ids"] != self.PAD).type(torch.float)
-        collated_samples["target_policy"] = torch.tensor([sample["target_policy"] for sample in input_samples], dtype=torch.long)
+        collated_samples["target_policy"] = torch.stack([sample["target_policy"] for sample in input_samples], dim=0)
+        
+        collated_samples["target_value"] = torch.tensor([sample["target_value"] for sample in input_samples], dtype=torch.float)
         
         return collated_samples
