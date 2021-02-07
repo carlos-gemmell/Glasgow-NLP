@@ -1,9 +1,10 @@
-from transformers import GPT2LMHeadModel, GPT2Config, GPT2Tokenizer
+from transformers import GPT2LMHeadModel, GPT2Config, GPT2Tokenizer, GPT2Model
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from pytorch_lightning.core.lightning import LightningModule
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from transformers.optimization import AdamW
 
 from transformers.file_utils import ModelOutput
 from transformers.generation_beam_search import BeamScorer, BeamSearchScorer
@@ -23,6 +24,79 @@ from transformers.utils import logging
 
 
 logger = logging.get_logger(__name__)
+
+class GPT2_Actor_Critic_Model(LightningModule):
+    def __init__(self, config, pad_id, bos_id, **kwargs):
+        super().__init__()
+        self.config = config
+        self.pad_token_id = pad_id
+        self.bos_token_id = bos_id
+        
+        self.transformer = GPT2Model(config)
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.value_head = nn.Linear(config.n_embd, 1, bias=False)
+    
+    def forward(self, x, **kwargs):
+        batch_size = x.shape[0]
+        amount_pad = (x == self.pad_token_id).sum(dim=1)
+        input_ids = torch.cat([torch.zeros(batch_size,1, dtype=torch.long, device=self.device), x], dim=1)
+        input_ids[torch.arange(batch_size), amount_pad] = self.bos_token_id
+        
+        attention_mask = (input_ids != self.pad_token_id)
+        position_ids = torch.cumsum(attention_mask, dim=1)
+        
+        transformer_outputs = self.transformer(
+            input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids)
+        hidden_states = transformer_outputs[0]
+        lm_logits = self.lm_head(hidden_states)
+        value_togits = self.value_head(hidden_states)
+        return lm_logits, value_togits
+    
+    def predict(self, x, **kwargs):
+        x = x.to(self.device)
+        policy_logits, value_logits = self.forward(x, **kwargs)
+        policy_logit, value_logit = policy_logits[:,-1], value_logits[:, -1]
+        p = torch.softmax(policy_logit, dim=-1)
+        return p.data.cpu(),  value_logit.data.cpu()
+    
+    def training_step(self, batch, batch_idx):
+        x = batch["input_ids"]
+        policy_logits, value_logits = self(x)
+        policy_logit, value_logit = policy_logits[:,-1], value_logits[:, -1]
+        loss = 0
+        if 'target_value' in batch:
+            target_value = batch["target_value"]
+            value_loss = nn.MSELoss()(value_logit.view(-1), target_value.view(-1))
+        else:
+            value_loss = 0
+        
+        if 'target_policy' in batch:
+            target_policy = batch["target_policy"]
+            if target_policy.shape[1] == 1:
+                # single word target
+#                 print(policy_logit.view(-1,self.BERT.config.vocab_size))
+#                 print(target_policy.view(-1))
+                policy_loss = nn.CrossEntropyLoss()(policy_logit.view(-1,self.config.vocab_size), target_policy.view(-1))
+            elif target_policy.shape[1] == self.config.vocab_size:
+                # full policy target
+                policy_loss = -torch.dot(target_policy.view(-1), torch.log(policy_logit.softmax(-1)).view(-1))/policy_logit.shape[0]
+            else:
+                raise f"incorrect shape for target_policy {target_policy.shape}"
+        else:
+            target_policy = 0
+            
+        loss = value_loss + policy_loss
+            
+        return {"loss":loss, 'log': {'train_loss': loss}}
+    
+    def configure_optimizers(self):
+        optimizer = AdamW(self.parameters(), lr=0.0001, weight_decay=0.01)
+#         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=0.01, steps_per_epoch=10000, epochs=1)
+#         scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=500, num_training_steps=15000)
+        return optimizer#, [scheduler]
+    
 
 class GPT2_Scratch_Pad_Model(GPT2LMHeadModel, LightningModule):
     def training_step(self, batch, batch_idx, **model_kwargs):

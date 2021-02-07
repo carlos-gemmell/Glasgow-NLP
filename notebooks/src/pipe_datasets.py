@@ -254,13 +254,17 @@ class Scratch_Pad_Policy_Dataset(Pipe_Dataset):
         input_samples: [dict]: these are samples obtained through the __getitem__ method
         """
         collated_samples = {}
-        collated_samples["input_ids"] = torch.nn.utils.rnn.pad_sequence([torch.flip(sample["input_ids"][0], [0]) for sample in input_samples], 
-                                                 padding_value=self.PAD, batch_first=True)
-        collated_samples["input_ids"] = torch.flip(collated_samples["input_ids"], [1])
+        flip_pad_flip_samples_fn = lambda samples, key, pad_val: torch.nn.utils.rnn.pad_sequence([torch.flip(sample[key], [0]) for sample in samples], 
+                                                 padding_value=pad_val, batch_first=True).flip([1])
         
-        collated_samples["attention_mask"] = (collated_samples["input_ids"] != self.PAD).type(torch.float)
-        collated_samples["target_policy"] = torch.stack([sample["target_policy"] for sample in input_samples], dim=0)
+        collated_samples["input_ids"] = flip_pad_flip_samples_fn(input_samples, 'input_ids', self.PAD)
         
-        collated_samples["target_value"] = torch.tensor([sample["target_value"] for sample in input_samples], dtype=torch.float)
+        max_seq_len = collated_samples["input_ids"].shape[1]
+        action_size = input_samples[0]['target_policies'].shape[1]
+        collated_samples["target_policies"] = torch.stack([torch.cat([torch.zeros(max_seq_len-s['target_policies'].shape[0], action_size), s['target_policies']]) for s in input_samples])
+        
+        collated_samples["target_values"] = flip_pad_flip_samples_fn(input_samples, 'target_values', 1.0)
+        
+        collated_samples['not_auto_gen_mask'] = torch.stack([torch.cat([torch.full((max_seq_len-s['not_auto_gen_mask'].shape[0],), False, dtype=torch.bool), s['not_auto_gen_mask']]) for s in input_samples])
         
         return collated_samples

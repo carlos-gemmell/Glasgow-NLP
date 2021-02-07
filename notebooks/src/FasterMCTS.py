@@ -3,6 +3,8 @@ import math
 import torch
 import numpy as np
 from itertools import compress as mask
+import networkx as nx
+from IPython.display import Image, display
 
 EPS = torch.tensor(1e-8)
 
@@ -134,100 +136,30 @@ class FasterMCTS():
         
         return values
         
-    
-    def batchSearch(self, current_states, target_strings, sim_action_select_temp=1, sample=True):
-        '''
-        current_states: padded Long tensor: [N, seq_len]
-        target_states: [str]: [N]
-        '''
-        N = current_states.shape[0]
-        vocab_size = self.env.getActionSize()
-        string_reps = self.env.to_hash(current_states) # [str*N]
-        game_states = self.env.batchGameEnded(current_states, target_strings) # torch.tensor([N]) -1 or 0(game not finished) or 1
-#         print('visited')
-        # policies [N, vocab_size], values [N]
-        policies, values = self.model.predict(current_states)
-        values = values.squeeze(1)
-                
-        # assume all states are new
-        states_visited = torch.zeros_like(game_states)
-        for i in range(N):
-            if string_reps[i] in self.cache:
-                states_visited[i] = 1
+    def plot(self, from_state=None):
+        OG=nx.OrderedGraph()
+        added_chunks = set()
+        states = sorted([node['state'].tolist() for node in self.cache.values()], key=len)
+        if type(from_state)!=type(None):
+            base_state_hash = ''.join(map(str, from_state.tolist()))
+            def contains(lst1, lst2):
+                ls1 = set(element for element in lst1 if element in lst2)
+                ls2 = set(element for element in lst2 if element in lst1)
+                return ls1 == ls2
+            states = [s for s in states if base_state_hash in ''.join(map(str, s))]
+        OG.add_node('[BOS]\n[1]')
+        for s in states:
+            s = [idx for idx in s if idx != 0]
+            for i in range(len(s), 0, -1):
+                parent_chunk = s[:i]
+                new_chunk = s[i:]
+                if tuple(parent_chunk) in added_chunks:
+                    break
+            added_chunks.add(tuple(s))
+            to_str = lambda x: self.env.to_hash(torch.tensor([x]))[0]
+            OG.add_node(to_str(s)+"\n"+str(s))
+            OG.add_edge(to_str(parent_chunk)+"\n"+str(parent_chunk), to_str(s)+"\n"+str(s))
         
-        returned_values = game_states # set finished states into returned_values
-        
-        # game_states that are terminal (-1 or +1) or non visited states
-        is_leaf_node_mask = (game_states!=0) | (states_visited==0) 
-        # game_states that are still going (0) or non visited states
-        non_terminal_leaf_states_mask = (game_states==0) & (states_visited==0) 
-        # add non terminal leaf node values to returned_values
-        returned_values[non_terminal_leaf_states_mask] = values[non_terminal_leaf_states_mask] 
-        
-        leaf_node_indices = torch.arange(N)[is_leaf_node_mask]
-        for i in leaf_node_indices:
-            self.cache[string_reps[i]] = {
-                'state': current_states[i],
-                'N': torch.tensor([1.0]),
-                'Qa': torch.zeros(vocab_size).to_sparse(),
-                'Na': torch.zeros(vocab_size).to_sparse(),
-                'eV': values[i]
-            }
-        # return since all states have values
-        if is_leaf_node_mask.all():
-            return returned_values
-        
-        is_branch_node_mask = ~is_leaf_node_mask
-        Ns = torch.stack([self.cache[string_reps[i]]['N'] for i in torch.arange(N)[is_branch_node_mask]])
-        Qas = torch.stack([self.cache[string_reps[i]]['Qa'].to_dense() for i in torch.arange(N)[is_branch_node_mask]])
-        Nas = torch.stack([self.cache[string_reps[i]]['Na'].to_dense() for i in torch.arange(N)[is_branch_node_mask]])
-        
-        # initialise all to be in exploration mode since the actions haven't been taken yet to exploit
-        UCB = self.cpuct * policies[is_branch_node_mask] * Ns.sqrt()
-        prev_taken_a_mask = Qas != 0 # select previouslly taken actions since it will have a valid exploitation value
-        UCB[prev_taken_a_mask] = Qas[prev_taken_a_mask] + \
-        self.cpuct * policies[prev_taken_a_mask] * Ns.sqrt().repeat(1,vocab_size)[prev_taken_a_mask] / (1 + Nas[prev_taken_a_mask])
-#         print(Ns.repeat(1,vocab_size))
-#         print(UCB)
-        
-        # Before sampling we can sharrpen the prob of selecting the best actions
-        UCB = torch.softmax(UCB/sim_action_select_temp, dim=1) # then renormalise     temp~0 sharpen maximally, almost argmax     temp > 1 flatten
-#         print(f'top nex actions {UCB.argsort(descending=True)[:,:10]} for states {current_states}')
-        # a [N,1]
-        a = UCB.multinomial(1) if sample else UCB.argmax(1).unsqueeze(1) # sellect next action for each state by either sampling or argmaxing
-#         print(f'selecting action {a} for states {current_states}')
-#         print(f'top scores from UCB: {UCB}')
-        branch_next_states = self.env.batchNextStates(current_states[is_branch_node_mask], a) # get next state for the branch nodes
-        
-        branch_target_strings = [target_strings[i] for i in torch.arange(N)[is_branch_node_mask]]
-        
-        returned_values[is_branch_node_mask] = self.batchSearch(branch_next_states, 
-                                                                branch_target_strings,
-                                                                sim_action_select_temp=sim_action_select_temp,
-                                                                sample=sample)
-#         print('returned_values', returned_values)
-        for i in torch.arange(N)[is_branch_node_mask]:
-            self.cache[string_reps[i]]['N'] += 1
-            dense_Na = self.cache[string_reps[i]]['Na'].to_dense()
-            
-            dense_Qa = self.cache[string_reps[i]]['Qa'].to_dense()
-            
-            dense_Qa[a[i]] = (dense_Na[a[i]] * dense_Qa[a[i]] + returned_values[i]) / (dense_Na[a[i]] + 1)
-#             print(f'dense_Qa[a[i]] = ({dense_Na[a[i]]} * {dense_Qa[a[i]]} + {returned_values[i]}) / ({dense_Na[a[i]]} + 1) = {(dense_Na[a[i]] * dense_Qa[a[i]] + values[i]) / (dense_Na[a[i]] + 1)} Qa->= {dense_Qa[a[i]]}')
-            self.cache[string_reps[i]]['Qa'] = dense_Qa.to_sparse()
-#             print('Qa', self.cache[string_reps[i]]['Qa'], 'for a', a[i])
-    
-#             print('pre Na', self.cache[string_reps[i]]['Na'], 'for a', a[i])
-            dense_Na[a[i]] += 1
-            self.cache[string_reps[i]]['Na'] = dense_Na.to_sparse()
-#             print('post Na', self.cache[string_reps[i]]['Na'], 'for a', a[i])
-            
-            del dense_Qa
-            del dense_Na
-#         del policies
-        return returned_values
-        
-    
-    def pi(self, s):
-        s = self.env.stringRepresentation(s)
-        return self.Psa[s]
+        pdot = nx.drawing.nx_pydot.to_pydot(OG)
+        png_str = pdot.write_png('/tmp/graph.png')
+        display(Image(filename='/tmp/graph.png'))
