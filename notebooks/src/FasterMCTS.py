@@ -163,3 +163,29 @@ class FasterMCTS():
         pdot = nx.drawing.nx_pydot.to_pydot(OG)
         png_str = pdot.write_png('/tmp/graph.png')
         display(Image(filename='/tmp/graph.png'))
+        
+    
+    def print_stats(self, current_states):
+        hashes = self.env.to_hash(current_states)
+        ps, vs = self.model.predict(current_states)
+        for i in range(current_states.shape[0]):
+            pi_string = hashes[i]
+            avgV = 0
+            if hashes[i] in self.cache:
+                node = self.cache[hashes[i]]
+                N = node['N']
+                pi_string += f"  N:{int(N)}; "
+                avgV = node['avg_V']
+                Nas = node['Na']
+                indices = torch.argsort(Nas, descending=True)
+                for idx in indices.reshape(-1,1)[:3]:
+                    pi_string += f"{self.env.to_hash(idx.unsqueeze(0))[0]}->{float(100*Nas[idx]/(N-1)):0.1f}% "
+                pi_string += f"; "
+            else:
+                pi_string += f"  State Not In Cache; "
+            
+            pi_string += f"(pV/avgV): {float(avgV):0.2f}/{float(vs[i]):0.2f}; Pred Tokens: "
+            indices = torch.argsort(ps[i], descending=True)
+            for idx in indices.reshape(-1,1)[:3]:
+                pi_string += f"{self.env.to_hash(idx.unsqueeze(0))[0]}->{float(100*ps[i][idx]):0.1f}% "
+            print(pi_string)

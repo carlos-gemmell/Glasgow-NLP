@@ -3,7 +3,8 @@ from torch.nn import functional as F
 from torch import nn
 from pytorch_lightning.core.lightning import LightningModule
 from transformers import LongformerForSequenceClassification, LongformerModel, BertModel, BertTokenizer, BertForSequenceClassification, \
-                         get_linear_schedule_with_warmup
+                         get_linear_schedule_with_warmup, BertConfig
+import numpy as np
 from transformers.optimization import AdamW
 
 from src.RawDataLoaders import MS_Marco_RawDataLoader
@@ -12,13 +13,27 @@ from src.models_and_transforms.text_transforms import Reranking_Sampler_Transfor
 # from src.models_and_transforms.complex_transforms import Manual_Query_Doc_Pipe_Transform
 from src.Experiments import Ranking_Experiment
 
+from stable_baselines3.common.policies import ActorCriticPolicy
+
+import collections
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
+
+from stable_baselines3.common.distributions import (
+    CategoricalDistribution,
+    make_proba_distribution,
+)
+from stable_baselines3.common.preprocessing import get_action_dim, is_image_space, preprocess_obs
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor, FlattenExtractor, MlpExtractor, NatureCNN, create_mlp
+from stable_baselines3.common.utils import get_device, is_vectorized_observation
+from stable_baselines3.common.vec_env import VecTransposeImage
+from stable_baselines3.common.vec_env.obs_dict_wrapper import ObsDictWrapper
+
 
 class CausalBERT(LightningModule):
-    def __init__(self, config, pad_id, bos_id, **kwargs):
+    def __init__(self, config, pad_id, **kwargs):
         super().__init__(**kwargs)
         self.config = config
         self.pad_id = pad_id
-        self.bos_id = bos_id
         self.transformer = BertModel(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.value_head = nn.Linear(config.hidden_size, 1, bias=False)
@@ -26,8 +41,6 @@ class CausalBERT(LightningModule):
     def forward(self, input_ids, **kwargs):
         batch_size = input_ids.shape[0]
         amount_pad = (input_ids == self.pad_id).sum(dim=1)
-#         input_ids = torch.cat([torch.zeros(batch_size,1, dtype=torch.long, device=self.device), x], dim=1)
-#         input_ids[torch.arange(batch_size), amount_pad] = self.bos_id
         
         attention_mask = (input_ids != self.pad_id)
         position_ids = torch.cumsum(attention_mask, dim=1)
@@ -38,8 +51,9 @@ class CausalBERT(LightningModule):
             position_ids=position_ids)
         hidden_states = transformer_outputs[0]
         lm_logits = self.lm_head(hidden_states)
-        value_togits = self.value_head(hidden_states)
-        return lm_logits, value_togits
+        value_logits = self.value_head(hidden_states)
+        values = torch.tanh(value_logits)
+        return lm_logits, values
     
     def predict(self, x, **kwargs):
         x = x.to(self.device)
@@ -57,19 +71,20 @@ class CausalBERT(LightningModule):
         
         policy_logits, value_logits = self(input_ids)
         
-#         value_loss = nn.MSELoss()(value_logits[grad_mask].view(-1), target_values[grad_mask].view(-1))
+        value_loss = nn.MSELoss()(value_logits[grad_mask].view(-1), target_values[grad_mask].view(-1))
         
         policy_loss = -torch.dot(target_policies[grad_mask].view(-1), torch.log(policy_logits[grad_mask].softmax(-1)).view(-1))/grad_mask.sum()
         
         if torch.isnan(policy_loss):
             print(-torch.dot(target_policies[grad_mask].view(-1), torch.log(policy_logits[grad_mask].softmax(-1)).view(-1))/grad_mask.sum())
             
-        loss = policy_loss
+        loss = policy_loss + value_loss
             
         return {"loss":loss, 'log': {'train_loss': loss}}
     
     def configure_optimizers(self):
-        optimizer = AdamW(self.parameters(), lr=0.0001, weight_decay=0.01)
+        self.lr=0.0001
+        optimizer = AdamW(self.parameters(), lr=self.lr, weight_decay=0.01)
 #         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=0.01, steps_per_epoch=10000, epochs=1)
 #         scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=500, num_training_steps=15000)
         return optimizer#, [scheduler]

@@ -10,6 +10,10 @@ from src.FastMCTS import FastMCTS
 from torch.utils.data import Dataset, DataLoader
 from pytorch_lightning import Trainer, Callback, seed_everything
 import string
+from tokenizers import ByteLevelBPETokenizer, Tokenizer
+
+from gym import error, spaces, utils
+import gym
 
 class Environment():
     def step(self):
@@ -27,7 +31,7 @@ class Scratch_Pad_Environment():
         self.device=device
         self.action_size = len(self.tokenizer.get_vocab())
         
-        self.max_token_length = 25
+        self.max_token_length = 35
         
         self.EXEC_id = self.tokenizer.get_vocab()['>>>']
         self.NL_id = self.tokenizer.get_vocab()['[NL]']
@@ -216,12 +220,13 @@ class Scratch_Pad_Environment():
             char_pool = string.ascii_uppercase + string.ascii_lowercase + string.digits
             samples = []
             for i in range(n):
-                sent_size = random.randrange(0,40)
+                sent_size = random.randrange(0,10)
                 rand_sent = ''.join(random.choices(char_pool, k=sent_size))
                 sample = {}
                 sample['prompt'] = f'[BOS]Copy "{rand_sent}":'
                 sample['gold'] = f'[BOS]Copy "{rand_sent}":{rand_sent}[EOS]'
-                sample['valid_fn'] = lambda s: s == f'[BOS]Copy "{rand_sent}":{rand_sent}[EOS]'
+                sample['answer'] = sample['gold']
+                sample['match_fn'] = self.match_no_SP_fn
                 if sample['prompt'] not in repetition_cache:
                     samples.append(sample)
                     repetition_cache.add(sample['prompt'])
@@ -229,7 +234,23 @@ class Scratch_Pad_Environment():
         if prompt_type == 'simple_addition':
             samples = []
             for i in range(n):
-                a = random.randrange(0,5)
+                a = random.randrange(0,30)
+                b = random.randrange(0,30)
+                sample = {}
+                sample['prompt'] = f'[BOS]What is {a}+{b}?'
+                sample['gold'] = f'[BOS]What is {a}+{b}?[SP]{a}+{b}>>>{a+b}[NL][ESP]{a+b}[EOS]'
+                sample['answer'] = f'[BOS]What is {a}+{b}?{a+b}[EOS]'
+                
+                sample['match_fn'] = self.match_no_SP_fn
+                assert sample['match_fn'](sample['gold'], sample['answer']) == 1
+                if sample['prompt'] not in repetition_cache:
+                    samples.append(sample)
+                    repetition_cache.add(sample['prompt'])
+            return samples
+        if prompt_type == 'simple_addition_single_digit':
+            samples = []
+            for i in range(n):
+                a = random.randrange(0,4)
                 b = random.randrange(0,5)
                 sample = {}
                 sample['prompt'] = f'[BOS]What is {a}+{b}?'
@@ -242,24 +263,22 @@ class Scratch_Pad_Environment():
                     samples.append(sample)
                     repetition_cache.add(sample['prompt'])
             return samples
-        if prompt_type == 'simple_addition_solution':
-            pairs = []
+        if prompt_type == 'simple_addition_5_digit':
+            samples = []
             for i in range(n):
-                a = random.randrange(0,300)
-                b = random.randrange(0,300)
-                prompt = f'[BOS]What is {a}+{b}?[SP]{a}+{b}>>>{a+b}[NL][ESP]{a+b}[EOS]'
-                target = f'[BOS]What is {a}+{b}?{a+b}[EOS]'
-                pairs.append((prompt, target))
-            return pairs
-        if prompt_type == 'simple_subtraction_solution':
-            pairs = []
-            for i in range(n):
-                a = random.randrange(0,300)
-                b = random.randrange(0,300)
-                prompt = f'[BOS]What is {a}-{b}?[SP]{a}-{b}>>>{a-b}[NL][ESP]{a-b}[EOS]'
-                target = f'[BOS]What is {a}-{b}?{a-b}[EOS]'
-                pairs.append((prompt, target))
-            return pairs
+                a = random.randrange(0,10000)
+                b = random.randrange(0,10000)
+                sample = {}
+                sample['prompt'] = f'[BOS]What is {a}+{b}?'
+                sample['gold'] = f'[BOS]What is {a}+{b}?[SP]{a}+{b}>>>{a+b}[NL][ESP]{a+b}[EOS]'
+                sample['answer'] = f'[BOS]What is {a}+{b}?{a+b}[EOS]'
+                
+                sample['match_fn'] = self.match_no_SP_fn
+                assert sample['match_fn'](sample['gold'], sample['answer']) == 1
+                if sample['prompt'] not in repetition_cache:
+                    samples.append(sample)
+                    repetition_cache.add(sample['prompt'])
+            return samples
         else:
             raise f'{prompt_type} not recognised'
             
@@ -284,3 +303,119 @@ class Scratch_Pad_Environment():
                          Required by MCTS for hashing.
         """
         return self.tokenizer.decode_batch(current_states.tolist())
+    
+
+def scratch_pad_exec(code):
+    if not code:
+        return ''
+    try:
+        prior_code, _, last_line = code.rpartition('\n')
+        exec(f'{prior_code}\nglobal __i__; __i__ = {last_line}')
+        global __i__
+        return str(__i__)
+    except Exception as e:
+        if hasattr(e,'msg'):
+            return "ERROR: " + e.msg
+        return "ERROR: " + str(e)
+
+def remove_ScratchPad(current_string):
+    return re.sub(r'\[SP\]([^.]*)\[ESP\]', '',current_string)
+    
+
+class AddGymEnv(gym.Env):
+    metadata = {"render.modes": ["human"], }
+    
+    def __init__(self, tokenizer_path='datasets/ScratchPad/tokenizer_simple.json', testing=False, max_val=10, max_token_length=35, padding=True):
+        self.testing = testing
+        self.tokenizer = Tokenizer.from_file(tokenizer_path)
+        self.max_token_length = max_token_length
+        self.vocab_size = len(self.tokenizer.get_vocab())
+        self.max_val = max_val
+        self.padding = padding
+        self.ep_count = 0
+        
+        self.action_space = spaces.Discrete(self.vocab_size)
+        self.observation_space = spaces.MultiDiscrete([self.vocab_size] * self.max_token_length)
+        
+        self.reset()
+        
+    def seed(self, seed=None):
+        seed_everything(seed)
+        
+    def step(self, action):
+        self.action_count += 1
+        self.current_state.append(action)
+        self.execute()
+        
+        pad_width = self.max_token_length - len(self.current_state)
+        if self.padding and pad_width > 0:
+            next_state = np.pad(self.current_state, (0,pad_width))
+        else:
+            next_state = self.current_state
+
+        done = self.is_done()
+        reward = self.reward_fn()
+        return next_state[:self.max_token_length], reward, done, {}
+    
+    def execute(self):
+        EXEC_id = self.tokenizer.get_vocab()['>>>']
+        SP_id = self.tokenizer.get_vocab()['[SP]']
+        ESP_id = self.tokenizer.get_vocab()['[ESP]']
+        
+        SP_count = sum( x == SP_id for x in self.current_state)
+        ESP_count = sum( x == ESP_id for x in self.current_state)
+        
+        if SP_count <= ESP_count:
+            return
+        
+        if self.current_state[-1] == EXEC_id:
+            sequence = self.tokenizer.decode(self.current_state, skip_special_tokens=False)
+            prior_scratch_pad_sequence, _, last_scratch_pad_sequence = sequence.rpartition('[SP]')
+            prior_scratch_pad_sequences = re.findall(r'\[SP\]([^.]*)\[ESP\]', prior_scratch_pad_sequence)
+            all_statements = ''.join(prior_scratch_pad_sequences + [last_scratch_pad_sequence])
+            individual_statements = re.split(r'>>>.*\[NL\]|>>>', all_statements)
+            code = '\n'.join([s for s in individual_statements if s])
+            
+            stmnt_out = scratch_pad_exec(code)
+            tokenized_stmnt_out = self.tokenizer.encode(stmnt_out + '[NL]').ids
+            self.current_state += tokenized_stmnt_out
+    
+    def render(self):
+        current_string =  self.tokenizer.decode(self.current_state, skip_special_tokens=False)
+        print(current_string)
+    
+    
+    def reward_fn(self):
+        if not self.is_done():
+            return 0 
+        
+        current_string =  self.tokenizer.decode(self.current_state, skip_special_tokens=False)
+        current_string = remove_ScratchPad(current_string)
+        
+        if current_string == self.answer:
+            return 1
+        else:
+            return -1
+    
+    def is_done(self):
+        EOS_id = self.tokenizer.get_vocab()['[EOS]']
+        return self.current_state[-1] == EOS_id or len(self.current_state) >= self.max_token_length
+            
+    
+    def reset(self):
+        self.action_count = 0
+        self.ep_count += 1
+        
+        a = random.randrange(0,self.max_val)
+        b = random.randrange(0,self.max_val)
+        current_string = f'[BOS]What is {a}+{b}?'
+        self.current_state = self.tokenizer.encode(current_string).ids
+        self.answer = f'[BOS]What is {a}+{b}?{a+b}[EOS]'
+        
+        pad_width = self.max_token_length - len(self.current_state)
+        if self.padding and pad_width > 0:
+            next_state = np.pad(self.current_state, (0,pad_width))
+        else:
+            next_state = self.current_state
+        
+        return next_state
