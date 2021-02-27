@@ -89,7 +89,7 @@ spec:
 
 Service Config:
 ```
-apiVersion: v1
+apiVersion: apps.openshift.io/v1
 kind: Service
 metadata:
   name: jupyterservice
@@ -107,7 +107,7 @@ spec:
 
 Route Config:
 ```
-apiVersion: v1
+apiVersion: apps.openshift.io/v1
 kind: Route
 metadata:
   name: jupyterroute
