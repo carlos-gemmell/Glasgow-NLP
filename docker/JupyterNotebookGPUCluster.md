@@ -89,7 +89,7 @@ spec:
 
 Service Config:
 ```
-apiVersion: apps.openshift.io/v1
+apiVersion: v1
 kind: Service
 metadata:
   name: jupyterservice
